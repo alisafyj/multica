@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, screen } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTask, TaskUsage } from "@multica/core/types";
+import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import { renderWithI18n } from "../../test/i18n";
 
 vi.mock("../../common/actor-avatar", () => ({
@@ -104,5 +105,80 @@ describe("IssueUsageDialog", () => {
 
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
+  });
+});
+
+describe("IssueUsageDialog amount completeness", () => {
+  afterEach(() => act(() => useCustomPricingStore.setState({ pricings: {} })));
+  const missing = usage({ provider: "r35-test", model: "unpriced-model" });
+
+  it("shows unknown for unpriced cost and cache savings instead of zero", () => {
+    open([makeTask({ usage: [missing] })]);
+    expect(screen.getAllByText("Unknown")).toHaveLength(4);
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+    expect(screen.getByText(/r35-test\/unpriced-model/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["en", "Unknown"],
+    ["zh-Hans", "未知"],
+    ["ja", "不明"],
+    ["ko", "알 수 없음"],
+  ] as const)("localizes unknown amounts in %s", (locale, label) => {
+    renderWithI18n(
+      <IssueUsageDialog open onOpenChange={() => {}} identifier="ACM-1" tasks={[makeTask({ usage: [missing] })]} />,
+      { locale },
+    );
+    expect(screen.getAllByText(label)).toHaveLength(4);
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+
+  it("keeps narrow KPI values stacked and the dialog vertically scrollable", () => {
+    open([makeTask({ usage: [usage(), missing] })]);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("max-h-[calc(100dvh-2rem)]");
+    expect(dialog.className).toContain("overflow-y-auto");
+    const grid = screen.getAllByText("$0.03 (partial)")[0]?.parentElement?.parentElement;
+    expect(grid?.className).toContain("grid-cols-1");
+    expect(grid?.className).toContain("@min-[40rem]/usage-detail:grid-cols-3");
+    expect(grid?.className).toContain("[&_.text-display]:text-title-lg");
+  });
+
+  it("preserves the known subtotal and suppresses incomplete cost comparisons", () => {
+    open([
+      makeTask({ id: "known", agent_id: "agent-known", status: "failed", usage: [usage()] }),
+      makeTask({ id: "missing", agent_id: "agent-missing", usage: [missing] }),
+    ]);
+    expect(screen.getAllByText("$0.03 (partial)")).toHaveLength(2);
+    expect(screen.queryByText(/failed run.*account/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Cost by agent")).not.toBeInTheDocument();
+    const rows = within(screen.getByRole("table")).getAllByRole("row");
+    expect(within(rows[1]!).getByText("$0.03")).toBeInTheDocument();
+    expect(within(rows[2]!).getByText("Unknown")).toBeInTheDocument();
+  });
+
+  it("keeps a recorded cost while cache savings remains unknown", () => {
+    open([makeTask({ usage: [{ ...missing, cost_usd_ticks: 30_000_000_000 }] })]);
+    expect(screen.getAllByText("$3.00")).toHaveLength(3);
+    expect(screen.getAllByText("Unknown")).toHaveLength(1);
+  });
+
+  it("does not report excluded costs when a task consumed no tokens", () => {
+    open([makeTask({ usage: [{ ...missing, input_tokens: 0, output_tokens: 0,
+      cache_read_tokens: 0, cache_write_tokens: 0 }] })]);
+    expect(screen.getAllByText("$0.00")).toHaveLength(4);
+    expect(screen.queryByText(/No price on file/)).not.toBeInTheDocument();
+  });
+
+  it("refreshes unknown amounts when a zero custom rate is saved", () => {
+    open([makeTask({ usage: [missing] })]);
+    expect(screen.getAllByText("Unknown")).toHaveLength(4);
+    act(() => useCustomPricingStore.getState().setCustomPricing("r35-test/unpriced-model", {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+    }));
+    expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
+    expect(screen.getAllByText("$0.00")).toHaveLength(4);
+    act(() => useCustomPricingStore.setState({ pricings: {} }));
+    expect(screen.getAllByText("Unknown")).toHaveLength(4);
   });
 });

@@ -127,15 +127,28 @@ const mockSquadsData = vi.hoisted(
   () => ({ list: [] as Array<{ id: string; name: string; leader_id: string; archived_at: string | null }> }),
 );
 
-// Per-test override for the runtimes list. Non-admin members receive a
-// filtered list (ListVisibleAgentRuntimes) that omits other members' private
-// machines, so a selected agent can point at a runtime_id that is simply not
-// present here — the case that used to be misreported as "daemon has no CLI
-// version" (#7633). Tests flip this to drop the row and prove the panel no
-// longer blocks on it.
-const mockRuntimesData = vi.hoisted(
-  () => ({ list: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] as Array<{ id: string; metadata: Record<string, unknown> }> }),
-);
+const mockAgentsData = vi.hoisted(() => ({
+  list: [{
+    id: "agent-1",
+    name: "Bohan",
+    archived_at: null,
+    runtime_id: "runtime-1",
+  }] as Array<{
+    id: string;
+    name: string;
+    archived_at: string | null;
+    runtime_id: string;
+    quick_create_supported?: boolean;
+    quick_create_fields_supported?: boolean;
+  }>,
+}));
+
+const mockRuntimesData = vi.hoisted(() => ({
+  list: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] as Array<{
+    id: string;
+    metadata: Record<string, unknown>;
+  }>,
+}));
 
 // The real handle mints an id when it inserts the placeholder and hands it to
 // the uploader, which adopts it as the draft `clientUploadId`. Mocks must do
@@ -153,9 +166,7 @@ vi.mock("@tanstack/react-query", () => ({
       case "members":
         return { data: [{ user_id: "user-1", role: "admin" }] };
       case "agents":
-        return {
-          data: [{ id: "agent-1", name: "Bohan", archived_at: null, runtime_id: "runtime-1" }],
-        };
+        return { data: mockAgentsData.list };
       case "runtimes":
         return { data: mockRuntimesData.list };
       case "projects":
@@ -555,7 +566,16 @@ describe("AgentCreatePanel", () => {
     mockProjectsQuery.data = [];
     mockProjectsQuery.isSuccess = true;
     mockSquadsData.list = [];
-    mockRuntimesData.list = [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }];
+    mockAgentsData.list = [{
+      id: "agent-1",
+      name: "Bohan",
+      archived_at: null,
+      runtime_id: "runtime-1",
+    }];
+    mockRuntimesData.list = [{
+      id: "runtime-1",
+      metadata: { cli_version: "1.2.3" },
+    }];
     mockQuickCreateIssue.mockResolvedValue(undefined);
     mockCreateCommentSubIssue.mockResolvedValue({ task_id: "task-source-child" });
     mockApiUploadFile.mockResolvedValue({
@@ -588,6 +608,60 @@ describe("AgentCreatePanel", () => {
         'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
       ),
     ).toHaveValue("Persisted draft prompt");
+  });
+
+  it("uses the server-attested capability when a shared agent's private runtime is hidden", async () => {
+    mockAgentsData.list[0] = {
+      ...mockAgentsData.list[0]!,
+      quick_create_supported: true,
+      quick_create_fields_supported: true,
+    };
+    mockRuntimesData.list = [];
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    const create = screen.getByRole("button", { name: /^Create$/i });
+    expect(create).toBeEnabled();
+    await user.click(create);
+    await waitFor(() => expect(mockQuickCreateIssue).toHaveBeenCalledTimes(1));
+  });
+
+  it("blocks when the server explicitly attests quick create is unsupported", () => {
+    mockAgentsData.list[0] = {
+      ...mockAgentsData.list[0]!,
+      quick_create_supported: false,
+      quick_create_fields_supported: false,
+    };
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    expect(screen.getByRole("button", { name: /^Create$/i })).toBeDisabled();
+  });
+
+  it("defers to the server when capability fields and a private runtime are hidden", () => {
+    mockRuntimesData.list = [];
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    expect(screen.getByRole("button", { name: /^Create$/i })).toBeEnabled();
+  });
+
+  it("uses the separate server-attested capability for explicit fields", async () => {
+    mockAgentsData.list[0] = {
+      ...mockAgentsData.list[0]!,
+      quick_create_supported: true,
+      quick_create_fields_supported: false,
+    };
+    mockRuntimesData.list = [];
+    mockCreateSettingsStore.quickCreateFields = ["priority"];
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+    expect(screen.getByRole("button", { name: /^Create$/i })).toBeEnabled();
+
+    await user.click(screen.getByTestId("priority-picker"));
+    expect(screen.getByRole("button", { name: /^Create$/i })).toBeDisabled();
   });
 
   it("restores unfinished actor, project, priority, and due-date selections after remount", async () => {

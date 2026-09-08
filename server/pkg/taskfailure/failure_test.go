@@ -48,6 +48,7 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonRuntimeRecovery, "runtime_recovery"},
 		{ReasonTimeout, "timeout"},
 		{ReasonIterationLimit, "iteration_limit"},
+		{ReasonExecutionBudgetExceeded, "execution_budget_exceeded"},
 		{ReasonAgentBlocked, "agent_blocked"},
 		{ReasonToolBudgetExceeded, "tool_budget_exceeded"},
 		{ReasonAPIInvalidRequest, "api_invalid_request"},
@@ -74,7 +75,7 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonAgentUnknown, "agent_error.unknown"},
 	}
 
-	if got, want := len(cases), 29; got != want {
+	if got, want := len(cases), 30; got != want {
 		t.Fatalf("constant count = %d, want %d (canonical taxonomy size)", got, want)
 	}
 
@@ -100,6 +101,7 @@ func TestIsAgentError(t *testing.T) {
 		ReasonRuntimeRecovery,
 		ReasonTimeout,
 		ReasonIterationLimit,
+		ReasonExecutionBudgetExceeded,
 		ReasonAgentBlocked,
 		ReasonAPIInvalidRequest,
 		ReasonSkillBundleUnavailable,
@@ -149,8 +151,8 @@ func TestAllReasonsContents(t *testing.T) {
 	t.Parallel()
 
 	got := AllReasons()
-	if len(got) != 29 {
-		t.Fatalf("AllReasons() returned %d entries, want 29", len(got))
+	if len(got) != 30 {
+		t.Fatalf("AllReasons() returned %d entries, want 30", len(got))
 	}
 
 	seen := make(map[Reason]bool, len(got))
@@ -167,8 +169,8 @@ func TestAllReasonsContents(t *testing.T) {
 		}
 	}
 
-	if platformCount != 15 {
-		t.Errorf("AllReasons(): platform-side count = %d, want 15", platformCount)
+	if platformCount != 16 {
+		t.Errorf("AllReasons(): platform-side count = %d, want 16", platformCount)
 	}
 	if agentCount != 14 {
 		t.Errorf("AllReasons(): agent-side count = %d, want 14", agentCount)
@@ -182,6 +184,7 @@ func TestAllReasonsContents(t *testing.T) {
 		ReasonQueuedExpired, ReasonRuntimeOffline, ReasonRuntimeReconnectTimeout,
 		ReasonRuntimeRecovery,
 		ReasonTimeout, ReasonIterationLimit, ReasonAgentBlocked,
+		ReasonExecutionBudgetExceeded,
 		ReasonAPIInvalidRequest, ReasonSkillBundleUnavailable,
 		ReasonAuthenticationExpired,
 		ReasonRuntimeCLITimeout, ReasonEnvironmentPrepareFailed,

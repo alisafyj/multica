@@ -132,7 +132,7 @@ multica agent copy <source-agent-id> --runtime-id <target> --model <model>  # cr
 | `custom_args` | `custom_args` (JSON array) | JSON shape checked CLI-side; server stores as-is | daemon (extra CLI switches); defaults to `[]` |
 | `runtime_config` | `runtime_config` (JSON) | JSON shape checked CLI-side; server stores as-is | runtime-specific config; defaults to `{}` |
 | `custom_env` | `custom_env` (JSON object) | — | daemon (process env); see Env and secrets |
-| `mcp_config` | `mcp_config` (raw JSON) | CLI checks it is a JSON object or `null`; server stores as-is. At create, literal `null` is dropped (no-op); at update, `null` clears the field | daemon → provider (provider-specific MCP handling); redacted on read |
+| `mcp_config` | `mcp_config` (raw JSON) | CLI checks it is a JSON object or `null`; the server validates the reserved `_multica.runtimeMcp` selection policy. At create, literal `null` is dropped (no-op); at update, `null` clears the field | daemon → provider (provider-specific MCP handling); redacted on read |
 | `visibility` | `visibility` | — | access control; defaults to `private`; gates who can read/route a private agent (e.g. a private squad leader) — NOT the runtime prompt |
 | `max_concurrent_tasks` | `max_concurrent_tasks` | integer from 1 through 50; out-of-range values return 400 | scheduler task cap; defaults to `6` |
 
@@ -289,6 +289,45 @@ Two ways `mcp_config` differs from `custom_env`:
 
 Provider support is not uniform: Qwen Code accepts a managed `mcp_config` through a daemon-owned 0600 temporary JSON file passed with `--mcp-config`; it is removed when the run exits. Leave the field unset (`null`) to inherit Qwen Code native settings.
 
+#### Runtime-local MCP selection
+
+Codex and Claude agents may select the daemon machine's runtime-local MCP base
+without copying local connection details into Multica:
+
+```json
+{
+  "_multica": {
+    "runtimeMcp": {
+      "mode": "allowlist",
+      "allow": ["docs"]
+    }
+  },
+  "mcpServers": {}
+}
+```
+
+| Mode | Runtime-local base |
+| --- | --- |
+| policy absent or `inherit` | inherit all eligible runtime-local servers |
+| `deny_all` | include none |
+| `allowlist` | include only the exact, case-sensitive names in `allow` |
+
+`allowlist` fails closed: every requested runtime-local name must exist and be
+enabled, valid, and privacy-allowed. An empty `allow` includes no runtime-local
+servers. `deny_all` and `allowlist` require Codex or Claude and the actual
+claiming daemon capability `runtime-mcp-selection-v1`.
+
+For Codex, non-inherited selection currently requires the verified built-in
+0.153.4 runtime contract and a task-private home. It also disables every
+installed plugin's MCP servers while retaining plugin skills. Plugin-only MCP
+names cannot be selected through `allow`; unsupported or incomplete discovery
+stops the run before a model turn. Inherit retains native plugin behavior.
+Conflicting plugin/MCP/profile command-line overrides are rejected.
+
+Explicit agent, workspace, project, and task ordinary MCP overlays still apply;
+this policy does not remove them. It does not bypass their privacy or project
+authorization checks.
+
 #### Workspace MCP servers
 
 A workspace keeps a LIBRARY of MCP servers (workspace Settings → MCP, or
@@ -307,15 +346,13 @@ At claim time the effective set is:
 
 | Layer | Reaches the agent when |
 | --- | --- |
-| runtime-local servers | always (the daemon merges the runtime's own file) |
-| workspace servers | assigned to THIS agent and left enabled |
-| the agent's own `mcp_config` | always; it WINS on a name collision |
+| runtime-local base | inherited, denied, or allowlisted by `_multica.runtimeMcp` |
+| workspace servers | explicitly assigned to the agent and enabled |
+| the agent's own `mcpServers` | explicitly configured; it WINS over runtime/workspace entries on a name collision |
+| project/task overlay | explicitly attached to the task; it WINS on a name collision |
 
-Two consequences worth knowing before writing an agent's config: assigning a
-shared server does not require re-listing it in `mcp_config` (they merge), and
-`mcp_config` is now only about servers private to that agent — a
-managed-but-empty `{}` no longer means anything about the workspace layer,
-because nothing is inherited in the first place.
+Assigning a shared server does not require re-listing it in the agent's
+`mcpServers`: explicit layers merge independently of the runtime-local policy.
 
 The stored entry is **write-only** — reads return the server's name and
 transport, never urls, commands, headers, or env, for any role.
@@ -340,6 +377,16 @@ FIRST, then appends the platform built-in skills. Each bound skill contributes
 its content plus its supporting files; built-in skills ship with the server and
 are loaded the same way. Both reach the provider as skill content — which is why
 capability belongs in a bound skill, not pasted into `instructions`.
+
+Runtime-local skill overrides are separate from workspace bindings. The agent
+Skills tab uses `PUT /api/agents/{id}/runtime-skills/enabled`; identities are
+scoped to the assigned runtime. Codex plugin controls require the actual builtin
+CLI 0.153.4 and a verified installed plugin path. At most 128 plugin skills may
+be disabled for one runtime. The API rejects new selections beyond that limit,
+but always permits clearing saved overrides, including missing skills or legacy
+over-limit settings. Clearing an override does not install or enable a global
+plugin. Incomplete installation bindings or unsupported execution versions
+reject the task rather than silently ignoring a saved constraint.
 
 ## Side effects needing approval
 

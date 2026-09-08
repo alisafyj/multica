@@ -64,9 +64,9 @@ Related to MUL-123 in the body (no title/branch)  # links but reference_only →
 When an issue run changes code in a checked-out GitHub repo, the default handoff
 is to open or update a PR before posting the final Multica issue comment, unless
 the user explicitly asked for a local-only change or no PR. This is a default, not
-an unconditional command: if no code changed, say no PR is needed; if PR creation
-is blocked by auth, failing tests, or missing remote state, report that blocker
-instead of pretending the run is complete.
+an unconditional command: if no code changed, say no PR is needed; if PR
+creation is blocked by auth, failing tests, or missing remote state, report that
+blocker instead of pretending the run is complete.
 
 Use a routable issue key in the PR title, body, or branch so the webhook can link
 the PR back to the issue. If the PR should close the issue on merge, put the key
@@ -233,6 +233,16 @@ writes the literal `done` key.
 - **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
   `todo` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.
+
+Issue creation has a known exception: a custom terminal status can still
+enqueue at creation. Use the built-in `done` or `cancelled` key when creating a
+terminal issue.
+
+When the runtime brief supplies `MULTICA_ISSUE_OUTCOME_FILE`, follow that
+managed completion contract for final status and delivery. Return the final
+response normally; do not duplicate it with a CLI comment. Explicit status
+commands remain available for deliberate state changes, and a successful
+process exit alone does not establish review readiness.
 
 ## Claim ownership without duplicating a run
 

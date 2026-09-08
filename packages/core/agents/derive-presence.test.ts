@@ -121,6 +121,10 @@ describe("deriveAgentAvailability", () => {
   it("returns offline when the runtime is null (deleted / never registered)", () => {
     expect(deriveAgentAvailability(null, NOW)).toBe("offline");
   });
+
+  it("returns unknown when a bound runtime is hidden from the viewer", () => {
+    expect(deriveAgentAvailability(null, NOW, true)).toBe("unknown");
+  });
 });
 
 describe("deriveWorkload", () => {
@@ -313,15 +317,26 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.workload).toBe("idle");
   });
 
-  it("handles a missing runtime by reporting offline + the task-driven workload", () => {
+  it("keeps a bound agent executable when runtime health is hidden", () => {
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
       runtime: null,
       tasks: [makeTask({ status: "running" })],
       now: NOW,
     });
-    expect(detail.availability).toBe("offline");
+    expect(detail.availability).toBe("unknown");
     expect(detail.workload).toBe("working");
+  });
+
+  it("reports a genuinely unbound agent as offline", () => {
+    const detail = deriveAgentPresenceDetail({
+      agent: makeAgent({ runtime_id: "", runtime_bound: false }),
+      runtime: null,
+      tasks: [],
+      now: NOW,
+    });
+    expect(detail.availability).toBe("offline");
+    expect(detail.workload).toBe("idle");
   });
 
   it("returns idle workload when only terminal tasks are present (history doesn't bleed in)", () => {
@@ -390,7 +405,7 @@ describe("buildPresenceMap", () => {
     expect(b?.workload).toBe("queued");
   });
 
-  it("returns offline availability for agents whose runtime_id has no matching runtime", () => {
+  it("returns unknown availability for bound agents whose runtime is not visible", () => {
     const orphan = makeAgent({ id: "orphan", runtime_id: "missing" });
     const map = buildPresenceMap({
       agents: [orphan],
@@ -399,9 +414,25 @@ describe("buildPresenceMap", () => {
       now: NOW,
     });
     const o = map.get("orphan");
-    expect(o?.availability).toBe("offline");
+    expect(o?.availability).toBe("unknown");
     // Workload still resolves independently — running task counts.
     expect(o?.workload).toBe("working");
+  });
+
+  it("returns offline availability for an explicitly unbound agent", () => {
+    const unbound = makeAgent({
+      id: "unbound",
+      runtime_id: "",
+      runtime_bound: false,
+    });
+    const map = buildPresenceMap({
+      agents: [unbound],
+      runtimes: [],
+      snapshot: [],
+      now: NOW,
+    });
+
+    expect(map.get("unbound")?.availability).toBe("offline");
   });
 
   it("uses an agent liveness projection when its private runtime is hidden", () => {

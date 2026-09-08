@@ -644,12 +644,26 @@ RETURNING *;
 -- unique key, so a competing retry or an already-attached context can make
 -- the subsequent attach-authority transfer lose after this row was inserted.
 -- Remove only that still-uncommitted child and let the parent's failure commit.
-DELETE FROM agent_task_queue
-WHERE id = sqlc.arg(task_id)
-  AND status IN ('queued', 'deferred')
-  AND issue_id IS NULL
-  AND chat_session_id IS NULL
-  AND autopilot_run_id IS NULL;
+WITH eligible AS MATERIALIZED (
+    SELECT candidate.id
+    FROM agent_task_queue AS candidate
+    WHERE candidate.id = sqlc.arg(task_id)
+      AND candidate.status IN ('queued', 'deferred')
+      AND candidate.issue_id IS NULL
+      AND candidate.chat_session_id IS NULL
+      AND candidate.autopilot_run_id IS NULL
+    FOR UPDATE OF candidate
+),
+deleted_task_run_evidence AS (
+    DELETE FROM task_run_evidence AS deleting_evidence
+    WHERE deleting_evidence.task_id IN (SELECT eligible.id FROM eligible)
+),
+deleted_task_pending_inputs AS (
+    DELETE FROM task_pending_input AS deleting_input
+    WHERE deleting_input.task_id IN (SELECT eligible.id FROM eligible)
+)
+DELETE FROM agent_task_queue AS deleting_task
+WHERE deleting_task.id IN (SELECT eligible.id FROM eligible);
 
 -- name: CancelAgentTasksByIssue :many
 -- Cancels every active task on the issue and returns the affected rows so the
@@ -854,6 +868,7 @@ RETURNING delivered_comment_ids;
 UPDATE agent_task_queue
 SET status = 'queued',
     dispatched_at = NULL,
+    queue_started_at = now(),
     prepare_lease_expires_at = NULL,
     delivered_comment_ids = '{}'
 WHERE id = @task_id
@@ -871,6 +886,7 @@ RETURNING *;
 -- recovered delivery attempt.
 UPDATE agent_task_queue
 SET dispatched_at = now(),
+    queue_started_at = NULL,
     prepare_lease_expires_at = now() + make_interval(secs => @prepare_lease_secs::double precision)
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
@@ -917,6 +933,7 @@ RETURNING *;
 -- (= ANY) and the LIMIT (max_tasks instead of 1) differ.
 UPDATE agent_task_queue
 SET dispatched_at = now(),
+    queue_started_at = NULL,
     prepare_lease_expires_at = now() + make_interval(secs => @prepare_lease_secs::double precision)
 WHERE id IN (
     SELECT atq.id FROM agent_task_queue atq

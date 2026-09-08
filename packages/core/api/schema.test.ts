@@ -62,6 +62,18 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
+  describe("project resources", () => {
+    it("falls back safely when a project resource list is malformed", async () => {
+      stubFetchJson({ resources: [{ id: 42 }], total: 1 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listProjectResources("project-1")).resolves.toEqual({
+        resources: [],
+        total: 0,
+      });
+    });
+  });
+
   describe("listTimeline", () => {
     it("falls back to an empty array when the body is null", async () => {
       stubFetchJson(null);

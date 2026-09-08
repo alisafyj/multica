@@ -2819,6 +2819,63 @@ describe("ApiClient model discovery response schema", () => {
   });
 });
 
+describe("ApiClient local skill discovery response schema", () => {
+  const completed = {
+    id: "req-1",
+    runtime_id: "rt-1",
+    status: "completed",
+    supported: true,
+    created_at: "2026-09-07T00:00:00Z",
+    updated_at: "2026-09-07T00:00:01Z",
+    skills: [
+      {
+        key: "review-helper",
+        name: "Review Helper",
+        source_path: "~/.claude/skills/review-helper",
+        provider: "claude",
+        file_count: 2,
+      },
+    ],
+  };
+
+  function stubJSON(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+  }
+
+  it("keeps an old daemon response without can_import usable", async () => {
+    stubJSON(completed);
+
+    const result = await new ApiClient("https://api.example.test")
+      .initiateListLocalSkills("rt-1");
+
+    expect(result.status).toBe("completed");
+    expect(result.skills?.[0]?.can_import).toBeUndefined();
+  });
+
+  it("fails closed on a malformed can_import value", async () => {
+    stubJSON({
+      ...completed,
+      skills: [{ ...completed.skills[0], can_import: "yes" }],
+    });
+
+    const result = await new ApiClient("https://api.example.test")
+      .getListLocalSkillsResult("rt-1", "req-9");
+
+    expect(result.status).toBe("failed");
+    expect(result.skills).toBeUndefined();
+    expect(result.id).toBe("req-9");
+    expect(result.runtime_id).toBe("rt-1");
+  });
+});
+
 /**
  * Mixed-version contract for subtree unsubscribe (MUL-5483).
  *

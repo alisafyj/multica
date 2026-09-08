@@ -5,8 +5,58 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestRuntimeMcpSummariesFlagTypes(t *testing.T) {
+	flags := []struct {
+		name                               string
+		value                              any
+		present, whenEnabled, whenDisabled bool
+	}{
+		{"missing", nil, false, true, true},
+		{"true", true, true, true, false},
+		{"false", false, true, false, true},
+		{"string", "false", true, false, false},
+		{"number", float64(0), true, false, false},
+		{"null", nil, true, false, false},
+		{"array", []any{}, true, false, false},
+		{"object", map[string]any{}, true, false, false},
+	}
+	for _, enabled := range flags {
+		for _, disabled := range flags {
+			t.Run("enabled-"+enabled.name+"/disabled-"+disabled.name, func(t *testing.T) {
+				entry := map[string]any{"command": "fixture-server", "env": map[string]any{"TOKEN": "synthetic-discovery-secret"}}
+				if enabled.present {
+					entry["enabled"] = enabled.value
+				}
+				if disabled.present {
+					entry["disabled"] = disabled.value
+				}
+				before, err := json.Marshal(entry)
+				if err != nil {
+					t.Fatal(err)
+				}
+				summaries := runtimeMcpSummaries(map[string]any{"fixture": entry}, "User config")
+				if len(summaries) != 1 || summaries[0].Name != "fixture" {
+					t.Fatal("invalid flags hid the inventory entry")
+				}
+				if want := enabled.whenEnabled && disabled.whenDisabled; summaries[0].Enabled != want {
+					t.Fatalf("enabled = %v, want %v", summaries[0].Enabled, want)
+				}
+				encoded, err := json.Marshal(summaries)
+				if err != nil || strings.Contains(string(encoded), "synthetic-discovery-secret") || strings.Contains(string(encoded), "fixture-server") {
+					t.Fatal("discovery exposed runtime configuration")
+				}
+				after, err := json.Marshal(entry)
+				if err != nil || string(after) != string(before) {
+					t.Fatal("discovery changed runtime configuration")
+				}
+			})
+		}
+	}
+}
 
 func TestListRuntimeLocalMcpServersCodexRedactsDetails(t *testing.T) {
 	home := t.TempDir()

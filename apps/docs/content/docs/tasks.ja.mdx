@@ -100,6 +100,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `cancelled` | 手動で停止されたか、アーカイブ・削除に伴ってキャンセルされた | 対処不要 |
 | `timeout` | デーモンに設定された実行時間の上限を超えた | タスクの範囲を狭めるか、デーモンの `agent_timeout` を調整する |
 | `iteration_limit` | 実行の反復回数の上限に達した | タスクの範囲を狭める |
+| `execution_budget_exceeded` | この実行に設定された支出予算を使い切った。プロバイダーアカウントのクォータ不足ではない | タスクの範囲を狭めてから手動でリトライする |
 | `agent_blocked` | エージェントが続行できないと自ら報告した | エージェントがコメントで求めた情報を補う |
 | `api_invalid_request` | プラットフォーム API が不正なリクエストを拒否した | リトライし、繰り返し発生する場合は問題を報告する |
 | `codex_semantic_inactivity` | Codex が長時間有効な出力を出さず、停滞と判定された | リトライするか、Codex の停滞タイムアウトを調整する |

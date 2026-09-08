@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,9 +36,10 @@ var codexBlockedArgs = map[string]blockedArgMode{
 }
 
 const (
-	codexFastServiceTier     = "priority"
-	codexStandardServiceTier = "default"
-	codexFastModeFeature     = "fast_mode"
+	codexFastServiceTier         = "priority"
+	codexStandardServiceTier     = "default"
+	codexFastModeFeature         = "fast_mode"
+	codexRequestUserInputFeature = "default_mode_request_user_input"
 )
 
 // codexStderrTailBytes bounds the stderr tail captured for inclusion in
@@ -48,6 +50,12 @@ const (
 const (
 	codexStderrTailBytes                  = 2048
 	defaultCodexSemanticInactivityTimeout = 10 * time.Minute
+	// A running command or MCP call may be legitimately silent far longer than
+	// model reasoning. Keep it off the semantic-inactivity clock, but retain a
+	// hard backend ceiling for direct callers and configurations where the
+	// daemon watchdog is disabled. The daemon's independently configured tool
+	// watchdog and the execution context may still stop it sooner.
+	defaultCodexInFlightToolTimeout = 2 * time.Hour
 	// defaultCodexFirstTurnNoProgressTimeout caps how long the first turn may
 	// stay completely silent after the app-server reports turn/started. Its only
 	// job is to fail fast instead of waiting out
@@ -270,6 +278,7 @@ const (
 	codexTimeoutNone codexTimeoutKind = iota
 	codexTimeoutSemanticInactivity
 	codexTimeoutFirstTurnNoProgress
+	codexTimeoutInFlightTool
 )
 
 type codexTimeoutDiagnostic struct {
@@ -280,6 +289,28 @@ type codexTimeoutDiagnostic struct {
 	TurnID       string
 	Model        string
 	CodexVersion string
+}
+
+// codexInFlightToolTimeoutNanos shortens the production watchdog in tests.
+// Non-positive values keep the production default.
+var codexInFlightToolTimeoutNanos atomic.Int64
+
+func codexInFlightToolTimeout(opts ExecOptions) time.Duration {
+	semanticTimeout := opts.SemanticInactivityTimeout
+	if semanticTimeout == 0 {
+		semanticTimeout = defaultCodexSemanticInactivityTimeout
+	}
+	timeout := time.Duration(codexInFlightToolTimeoutNanos.Load())
+	if timeout <= 0 {
+		timeout = opts.InFlightToolTimeout
+		if timeout <= 0 {
+			timeout = defaultCodexInFlightToolTimeout
+		}
+	}
+	if semanticTimeout > timeout {
+		return semanticTimeout
+	}
+	return timeout
 }
 
 // codexFirstItemWaitObservation records the interval from turn/started to the
@@ -326,7 +357,10 @@ func (o *codexFirstItemWaitObservation) snapshot() (time.Duration, string, codex
 // codexBackend implements Backend by spawning `codex app-server --listen stdio://`
 // and communicating via JSON-RPC 2.0 over stdin/stdout.
 type codexBackend struct {
-	cfg Config
+	cfg                               Config
+	requestUserInputFeatureOnce       sync.Once
+	requestUserInputFeatureSupported  bool
+	requestUserInputFeatureDiagnostic string
 }
 
 func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
@@ -335,7 +369,53 @@ func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.ServiceTier == codexFastServiceTier {
 		launchArgs = enforceCodexFastMode(launchArgs, logger)
 	}
+	if opts.RequestUserInput != nil {
+		launchArgs = enforceCodexRequestUserInputFeature(launchArgs, logger)
+	}
 	return append(args, launchArgs...)
+}
+
+func (b *codexBackend) requestUserInputFeatureSupport(ctx context.Context, runtimeCmd Command) (bool, string) {
+	b.requestUserInputFeatureOnce.Do(func() {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		stdout, _, _, err := RunCollectQuietCmd(
+			probeCtx,
+			runtimeCmd.exec(probeCtx, "features", "list"),
+			buildEnv(b.cfg.Env),
+			DefaultQuietIdleGrace,
+			nil,
+		)
+		if err != nil {
+			b.requestUserInputFeatureDiagnostic = "could not verify installed Codex support for " + codexRequestUserInputFeature
+			return
+		}
+		if !codexFeaturesListAdvertises(stdout, codexRequestUserInputFeature) {
+			b.requestUserInputFeatureDiagnostic = "installed Codex does not advertise feature " + codexRequestUserInputFeature
+			return
+		}
+		b.requestUserInputFeatureSupported = true
+	})
+	return b.requestUserInputFeatureSupported, b.requestUserInputFeatureDiagnostic
+}
+
+func codexFeaturesListAdvertises(output []byte, feature string) bool {
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == feature {
+			return true
+		}
+	}
+	return false
+}
+
+func codexEffectiveConfigHasFeature(config map[string]any, feature string) bool {
+	features, ok := config["features"].(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, _ := features[feature].(bool)
+	return enabled
 }
 
 // NormalizeCodexLaunchArgs returns the user-supplied Codex args (extra then
@@ -439,6 +519,47 @@ func stripCodexFastModeConflicts(args []string, logger *slog.Logger) []string {
 	return filtered
 }
 
+func enforceCodexRequestUserInputFeature(args []string, logger *slog.Logger) []string {
+	return append(stripCodexRequestUserInputFeatureConflicts(args, logger), "--enable", codexRequestUserInputFeature)
+}
+
+func stripCodexRequestUserInputFeatureConflicts(args []string, logger *slog.Logger) []string {
+	args = filterCodexConfigOverrides(
+		args,
+		codexManagedRequestUserInputConfigKeyRe,
+		"features."+codexRequestUserInputFeature,
+		logger,
+	)
+	filtered := make([]string, 0, len(args)+2)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		flag := arg
+		value := ""
+		hasInlineValue := false
+		if idx := strings.Index(arg, "="); idx > 0 {
+			flag = arg[:idx]
+			value = arg[idx+1:]
+			hasInlineValue = true
+		}
+		if flag == "--enable" || flag == "--disable" {
+			if !hasInlineValue && i+1 < len(args) {
+				value = args[i+1]
+			}
+			if value == codexRequestUserInputFeature {
+				if logger != nil {
+					logger.Warn("codex: ignored lower-priority feature override", "feature", codexRequestUserInputFeature)
+				}
+				if !hasInlineValue {
+					i++
+				}
+				continue
+			}
+		}
+		filtered = append(filtered, arg)
+	}
+	return filtered
+}
+
 // hasManagedCodexMcpConfig reports whether the agent's mcp_config field is
 // "present" in the API three-state sense: a non-null JSON value. Both
 // `{}` and `{"mcpServers":{}}` count as present (the admin saved an empty
@@ -457,6 +578,9 @@ var codexManagedMcpConfigKeyRe = regexp.MustCompile(`^\s*mcp_servers(?:\s*\.|\s*
 
 var codexManagedFastModeConfigKeyRe = regexp.MustCompile(
 	`^\s*features\s*\.\s*fast_mode\s*(?:=|$)`)
+
+var codexManagedRequestUserInputConfigKeyRe = regexp.MustCompile(
+	`^\s*features\s*\.\s*default_mode_request_user_input\s*(?:=|$)`)
 
 // A daemon-managed shell_environment_policy must also win over profile and
 // custom-arg overrides. Match root and profile policy keys without catching an
@@ -619,17 +743,8 @@ func ensureCodexMcpConfig(configPath string, mcpConfig json.RawMessage, logger *
 	if updated == existing {
 		return nil
 	}
-	if err := os.WriteFile(configPath, []byte(updated), 0o600); err != nil {
+	if err := writePrivateCodexConfig(configPath, []byte(updated)); err != nil {
 		return fmt.Errorf("write config.toml: %w", err)
-	}
-	// os.WriteFile applies the mode only when creating a new file; if the
-	// per-task config.toml was already on disk at 0o644 (the default mode
-	// used by execenv.copyFile when seeding from ~/.codex/config.toml),
-	// the secret-bearing values we just wrote would inherit that wider
-	// mode. Chmod unconditionally to keep the secret in the daemon
-	// owner's lane regardless of the prior mode.
-	if err := os.Chmod(configPath, 0o600); err != nil {
-		return fmt.Errorf("chmod config.toml to 0600: %w", err)
 	}
 	if logger != nil {
 		logger.Debug("codex: wrote managed mcp_servers block to config.toml",
@@ -902,8 +1017,26 @@ func isCodexBareTomlKey(s string) bool {
 }
 
 func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if err := validateProjectConfigurationPolicy(opts.ProjectConfigurationPolicy); err != nil {
+		return nil, fmt.Errorf("codex project configuration policy: %w", err)
+	}
+	var err error
+	opts, err = b.prepareCodexPluginSkillPolicy(opts)
+	if err != nil {
+		return nil, err
+	}
+	opts, err = b.preparePluginMCP(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	firstSession, err := b.executeOnce(ctx, prompt, opts, 1)
 	if err != nil {
+		if opts.codexPluginMCP != nil {
+			if restoreErr := opts.codexPluginMCP.restore(); restoreErr != nil {
+				b.cfg.Logger.Warn("codex plugin MCP private configuration restoration failed")
+			}
+			return nil, codexPluginMCPError("task startup failed")
+		}
 		return nil, err
 	}
 	msgCh := make(chan Message, 256)
@@ -912,6 +1045,17 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	go func() {
 		defer close(msgCh)
 		defer close(resCh)
+		publish := func(result Result) {
+			if opts.codexPluginMCP != nil {
+				if err := opts.codexPluginMCP.restore(); err != nil {
+					b.cfg.Logger.Warn("codex plugin MCP private configuration restoration failed")
+					if result.Status == "completed" {
+						result.Status, result.Error = "failed", err.Error()
+					}
+				}
+			}
+			resCh <- result
+		}
 		session := firstSession
 		attemptOpts := opts
 		for attempt := 1; attempt <= 2; attempt++ {
@@ -919,7 +1063,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 				var err error
 				session, err = b.executeOnce(ctx, prompt, attemptOpts, attempt)
 				if err != nil {
-					resCh <- Result{Status: "failed", Error: err.Error()}
+					if opts.codexPluginMCP != nil {
+						err = codexPluginMCPError("task startup failed")
+					}
+					publish(Result{Status: "failed", Error: err.Error()})
 					return
 				}
 			}
@@ -952,7 +1099,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			result, ok := <-session.Result
 			if !ok {
 				flushHeldPins()
-				resCh <- Result{Status: "failed", Error: "codex attempt closed without result"}
+				publish(Result{Status: "failed", Error: "codex attempt closed without result"})
 				return
 			}
 			retryReason := ""
@@ -964,7 +1111,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			}
 			if retryReason == "" || attempt == 2 {
 				flushHeldPins()
-				resCh <- result
+				publish(result)
 				return
 			}
 			// The model catalog refresh reaches the network, so give the
@@ -992,7 +1139,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			select {
 			case <-ctx.Done():
 				flushHeldPins()
-				resCh <- result
+				publish(result)
 				return
 			case <-time.After(backoff):
 			}
@@ -1003,6 +1150,9 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 }
 
 func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts ExecOptions, attempt int) (*Session, error) {
+	if err := verifyCodexPluginSkillPolicy(b.cfg, opts); err != nil {
+		return nil, err
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "codex"
@@ -1016,8 +1166,25 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	if semanticInactivityTimeout == 0 {
 		semanticInactivityTimeout = defaultCodexSemanticInactivityTimeout
 	}
+	inFlightToolTimeout := codexInFlightToolTimeout(opts)
 	handshakeTimeout, threadHandshakeTimeout := resolveCodexHandshakeTimeouts(opts)
 	runCtx, cancel := runContext(ctx, timeout)
+	runtimeCmd := b.cfg.commandAt(execPath)
+	if opts.RequestUserInput != nil {
+		if supported, diagnostic := b.requestUserInputFeatureSupport(runCtx, runtimeCmd); !supported {
+			b.cfg.Logger.Warn("codex pending input unavailable; continuing without question bridge", "reason", diagnostic)
+			opts.RequestUserInput = nil
+		}
+	}
+	codexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
+	if opts.ProjectConfigurationPolicy != "" {
+		canonicalCwd, err := ensureCodexProjectConfiguration(codexHome, opts.Cwd, b.cfg.Env["HOME"], opts.ProjectConfigurationPolicy)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("apply codex project configuration policy: %w", err)
+		}
+		opts.Cwd = canonicalCwd
+	}
 
 	// Materialise the agent's MCP config into the per-task
 	// `$CODEX_HOME/config.toml`. Argv would be the simpler path, but
@@ -1028,7 +1195,6 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// logs redact values, but log redaction cannot protect the process list.
 	// Writing through config.toml at 0o600 keeps the secret values out of argv
 	// entirely.
-	codexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 	if codexHome != "" {
 		if err := ensureCodexMcpConfig(filepath.Join(codexHome, "config.toml"), opts.McpConfig, b.cfg.Logger); err != nil {
 			// Fail closed when we can't materialise the managed config.
@@ -1054,7 +1220,6 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// `-c key=value` override wins over the task-local config.toml from any
 	// argv position, so the prefix needs the same two removals ExtraArgs and
 	// CustomArgs get below.
-	runtimeCmd := b.cfg.commandAt(execPath)
 	if codexHome != "" {
 		// The daemon owns shell_environment_policy in the task-local config.
 		// Codex -c/--config overrides are last-wins, so remove user-provided
@@ -1080,7 +1245,16 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			return stripCodexFastModeConflicts(prefix, b.cfg.Logger)
 		})
 	}
+	if opts.RequestUserInput != nil {
+		runtimeCmd = runtimeCmd.withFilteredPrefix(func(prefix []string) []string {
+			return stripCodexRequestUserInputFeatureConflicts(prefix, b.cfg.Logger)
+		})
+	}
 	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	if opts.codexPluginMCP != nil && opts.codexPluginMCP.ready {
+		// Names and false only. Never place inherited plugin configuration in argv.
+		codexArgs = append(codexArgs, opts.codexPluginMCP.launchOverrides()...)
+	}
 	cmd := runtimeCmd.exec(runCtx, codexArgs...)
 	hideAgentWindow(cmd)
 	// Run codex in its own process group so a cancel-on-stuck cleanup
@@ -1110,7 +1284,12 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
 	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	responseMetadataEnabled := codexResponseMetadataEnabled(b.cfg, attempt)
+	commandEnv := b.cfg.Env
+	if responseMetadataEnabled {
+		commandEnv = codexResponseMetadataEnv(commandEnv)
+	}
+	cmd.Env = buildEnv(commandEnv)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -1125,7 +1304,14 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// Codex stderr can contain auth/provider diagnostics. Capture a bounded
 	// tail and emit it only through the sanitizer in the cleanup event.
 	stderrBuf := newStderrTail(io.Discard, codexStderrTailBytes)
-	cmd.Stderr = stderrBuf
+	var responseMetadataWriter *codexResponseMetadataWriter
+	var responseMetadataProjection *codexResponseMetadataProjection
+	if responseMetadataEnabled {
+		responseMetadataWriter = newCodexResponseMetadataWriter(stderrBuf, codexResponseMetadataLimits{})
+		cmd.Stderr = responseMetadataWriter
+	} else {
+		cmd.Stderr = stderrBuf
+	}
 
 	// Start and take ownership of the process tree in one step. On Windows the
 	// child is created suspended and placed in a Job Object before it runs, so
@@ -1156,6 +1342,8 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
 	semanticActivityCh := make(chan string, 256)
+	userInputWaitCh := make(chan bool, 4)
+	toolActivity := newCodexInFlightToolState()
 
 	var outputMu sync.Mutex
 	// Result.Output is "final user-facing output selected by the backend"
@@ -1180,7 +1368,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 
 	c := &codexClient{
 		cfg:                    b.cfg,
-		stdin:                  stdin,
+		stdin:                  &lockedWriter{writer: stdin},
 		pending:                make(map[int]*pendingRPC),
 		processDone:            make(chan struct{}),
 		handshakeTimeout:       handshakeTimeout,
@@ -1195,6 +1383,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			// progress, even when it is intentionally excluded from the active
 			// turn. Preserve initialize-retry safety without replaying content.
 			semanticObserved.Store(true)
+		},
+		onToolTransition: func(transition codexToolTransition) {
+			toolActivity.observe(transition, time.Now())
 		},
 		onMessage: func(msg Message) {
 			logCodexAgentMessage(b.cfg.Logger, msg)
@@ -1221,8 +1412,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				}
 			}
 			activity := describeCodexSemanticActivity(msg)
+			observedAt := time.Now()
+			if transition, ok := codexToolTransitionFromMessage(msg); ok {
+				toolActivity.observe(transition, observedAt)
+			}
 			if activity == "status:running" {
-				firstItemWait.start(time.Now())
+				firstItemWait.start(observedAt)
+				toolActivity.observeTurnStarted(observedAt)
 			}
 			trySend(msgCh, msg)
 			trySendString(semanticActivityCh, activity)
@@ -1246,8 +1442,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			default:
 			}
 		},
+		requestContext:   runCtx,
+		requestUserInput: opts.RequestUserInput,
+		pendingInputs:    newPendingInputCoordinator(),
+		onUserInputWait: func(waiting bool) {
+			select {
+			case userInputWaitCh <- waiting:
+			default:
+			}
+		},
+		onUserInputStatus: func(status string) {
+			trySend(msgCh, Message{Type: MessageStatus, Status: status})
+		},
 	}
 
+	c.pluginMCPPreflight.Store(opts.codexPluginMCP != nil)
 	// Start reading stdout in background
 	readerDone := make(chan struct{})
 	go func() {
@@ -1394,6 +1603,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			if codexCleanupConfirmationOverride.Load() < 0 {
 				cleanupConfirmed = false
 			}
+			cleanupEnded := time.Now()
+			logCodexExecutionSpan(b.cfg.Logger, b.cfg, cmd.Process.Pid, attempt, cmd.Dir, launchStarted, cleanupEnded, cleanupConfirmed)
+			if responseMetadataWriter != nil {
+				projection := responseMetadataWriter.Finish()
+				responseMetadataProjection = &projection
+				logCodexResponseMetadata(b.cfg.Logger, b.cfg, cmd.Process.Pid, attempt, opts.Cwd, c.threadID, projection)
+			}
 			b.cfg.Logger.Info("codex lifecycle",
 				"phase", "cleanup",
 				"task_id", b.cfg.TaskID,
@@ -1422,10 +1638,24 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	// codex process exits → reader goroutine's scanner.Scan() returns false →
 	// readerDone closes → lifecycle goroutine collects final output and sends Result.
 	go func() {
+		var result Result
+		pluginPolicyVerified := false
 		defer activeCodexLaunches.Add(-1)
-		defer cancel()
-		defer close(msgCh)
 		defer close(resCh)
+		defer close(msgCh)
+		defer func() {
+			cancel()
+			if opts.codexPluginMCP != nil && !pluginPolicyVerified && result.Status == "failed" {
+				result.Error = codexPluginMCPError("pre-thread preparation failed").Error()
+				result.codexInitializeRetrySafe = false
+				result.RuntimeMCPSelectionFailed = true
+			}
+			if err := c.pendingInputs.wait(); err != nil && result.Status == "completed" {
+				result.Status = "failed"
+				result.Error = err.Error()
+			}
+			resCh <- result
+		}()
 		defer drainAndWait()
 
 		startTime := time.Now()
@@ -1475,15 +1705,94 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				finalError += "; retry suppressed: process-tree cleanup cannot be confirmed on this platform"
 			}
 			b.cfg.Logger.Warn("codex lifecycle", "phase", "initialize_failure", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", initializeLatency.Round(time.Millisecond).String(), "semantic_activity", semanticObserved.Load(), "cleanup_confirmed", cleanupConfirmed, "retry_safe", retrySafe)
-			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds(), codexInitializeRetrySafe: retrySafe}
+			result = Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds(), codexInitializeRetrySafe: retrySafe}
 			return
 		}
 		b.cfg.Logger.Info("codex lifecycle", "phase", "initialize_response", "task_id", b.cfg.TaskID, "runtime_id", b.cfg.RuntimeID, "pid", cmd.Process.Pid, "attempt", attempt, "latency", time.Since(initializeStarted).Round(time.Millisecond).String())
 		c.notify("initialized")
+		if plan := opts.codexPluginMCP; plan != nil {
+			preflightCtx, preflightCancel := context.WithTimeout(runCtx, codexPluginMCPBudget(opts))
+			if !plan.ready {
+				inventory, inventoryErr := discoverCodexPluginMCPWithCache(preflightCtx, c, opts)
+				preflightCancel()
+				// This process has no thread. Stop its entire owned tree, including
+				// metadata helpers with detached stdio, before the task launch.
+				signalProcessGroup(cmd, syscall.SIGKILL)
+				drainAndWait()
+				if inventoryErr != nil || !cleanupConfirmed {
+					result = Result{Status: "failed", Error: codexPluginMCPError("inventory or process cleanup failed").Error()}
+					return
+				}
+				plan.inventory = inventory
+				result = Result{Status: "completed"}
+				return
+			}
+			policyErr := verifyCodexPluginMCPPolicy(preflightCtx, c, opts)
+			preflightCancel()
+			if policyErr != nil {
+				result = Result{Status: "failed", Error: policyErr.Error(), DurationMs: time.Since(startTime).Milliseconds()}
+				return
+			}
+			pluginPolicyVerified = true
+			c.pluginMCPPreflight.Store(false)
+		}
+		if opts.RequestUserInput != nil {
+			effectiveConfig, err := readCodexConfiguration(runCtx, c, opts.Cwd, codexConfigurationReadPurposeTaskEffective)
+			if err != nil {
+				result = Result{
+					Status:     "failed",
+					Error:      "codex pending input preflight failed: " + sanitizeCodexDiagnostic(err.Error()),
+					DurationMs: time.Since(startTime).Milliseconds(),
+				}
+				return
+			}
+			if !codexEffectiveConfigHasFeature(effectiveConfig.Config, codexRequestUserInputFeature) {
+				result = Result{
+					Status:     "failed",
+					Error:      "codex pending input preflight failed: required task-private feature " + codexRequestUserInputFeature + " is not enabled",
+					DurationMs: time.Since(startTime).Milliseconds(),
+				}
+				return
+			}
+		}
+		if opts.ProjectConfigurationPolicy != "" {
+			if err := verifyCodexProjectConfiguration(runCtx, c, opts); err != nil {
+				result = Result{
+					Status:     "failed",
+					Error:      "codex project configuration preflight failed: " + sanitizeCodexDiagnostic(err.Error()),
+					DurationMs: time.Since(startTime).Milliseconds(),
+				}
+				return
+			}
+		}
+		if opts.ValidateResolvedModelSelection != nil {
+			effectiveConfig, err := readCodexConfiguration(runCtx, c, opts.Cwd, codexConfigurationReadPurposeTaskEffective)
+			if err != nil {
+				result = Result{
+					Status:     "failed",
+					Error:      "codex model selection preflight failed: " + sanitizeCodexDiagnostic(fmt.Errorf("read effective model configuration: %w", err).Error()),
+					DurationMs: time.Since(startTime).Milliseconds(),
+				}
+				return
+			}
+			model, _ := effectiveConfig.Config["model"].(string)
+			if err := opts.ValidateResolvedModelSelection(strings.TrimSpace(model)); err != nil {
+				result = Result{
+					Status:     "failed",
+					Error:      "codex model selection preflight failed: " + sanitizeCodexDiagnostic(err.Error()),
+					DurationMs: time.Since(startTime).Milliseconds(),
+				}
+				return
+			}
+		}
 
 		// 2. Start a new thread, or resume the prior one for this issue. When
 		// resume fails (thread GCed on the server, schema drift, etc.) we fall
 		// back to a fresh thread so the task still makes progress.
+		if err := verifyCodexPluginCacheBindings(opts.codexPluginMCP); err != nil {
+			result = Result{Status: "failed", Error: err.Error(), RuntimeMCPSelectionFailed: true}
+			return
+		}
 		threadID, resumed, err := c.startOrResumeThread(runCtx, opts, b.cfg.Logger)
 		if err != nil {
 			var handshakeErr *codexHandshakeTimeoutError
@@ -1520,7 +1829,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"stderr_bare_timeout_count", classification.bareTimeout,
 				)
 			}
-			resCh <- Result{
+			result = Result{
 				Status:         finalStatus,
 				Error:          finalError,
 				DurationMs:     time.Since(startTime).Milliseconds(),
@@ -1560,12 +1869,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		waitingForTurn := true
 		var timeoutDiagnostic codexTimeoutDiagnostic
 		var processExitErr error
-		finishFirstItemWait := func(outcome string) {
+		finishFirstItemWaitAt := func(observedAt time.Time, outcome string) {
 			firstItemWait.finish(
-				time.Now(),
+				observedAt,
 				outcome,
 				classifyCodexStartupStderr(stderrBuf.Tail(), strings.HasSuffix(outcome, "_timeout")),
 			)
+		}
+		finishFirstItemWait := func(outcome string) {
+			finishFirstItemWaitAt(time.Now(), outcome)
 		}
 		finishTurn := func(aborted bool) {
 			waitingForTurn = false
@@ -1598,7 +1910,7 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 				finalStatus = "failed"
 				finalError = withAgentStderr(fmt.Sprintf("codex turn/start failed: %v", err), "codex", sanitizeCodexDiagnostic(stderrBuf.Tail()))
-				resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
+				result = Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 				return
 			}
 		}
@@ -1607,6 +1919,59 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		lastSemanticActivityDescription := "turn/start"
 		semanticTimer := time.NewTimer(semanticInactivityTimeout)
 		defer semanticTimer.Stop()
+		semanticTimerC := semanticTimer.C
+		var inFlightToolTimer *time.Timer
+		var inFlightToolTimerC <-chan time.Time
+		stopInFlightToolTimer := func() {
+			stopTimer(inFlightToolTimer)
+			inFlightToolTimerC = nil
+		}
+		resetInFlightToolTimer := func(now, startedAt time.Time) {
+			remaining := inFlightToolTimeout - now.Sub(startedAt)
+			if remaining <= 0 {
+				remaining = time.Nanosecond
+			}
+			if inFlightToolTimer == nil {
+				inFlightToolTimer = time.NewTimer(remaining)
+			} else {
+				resetTimer(inFlightToolTimer, remaining)
+			}
+			inFlightToolTimerC = inFlightToolTimer.C
+		}
+		defer stopInFlightToolTimer()
+		var appliedToolActivityVersion uint64
+		var currentToolSnapshot codexInFlightToolSnapshot
+		waitingForUserInput := false
+		applyToolSnapshot := func(snapshot codexInFlightToolSnapshot, now time.Time) {
+			if snapshot.version == appliedToolActivityVersion {
+				return
+			}
+			appliedToolActivityVersion = snapshot.version
+			currentToolSnapshot = snapshot
+			if waitingForUserInput {
+				stopTimer(semanticTimer)
+				semanticTimerC = nil
+				stopInFlightToolTimer()
+				return
+			}
+			if snapshot.count > 0 {
+				stopTimer(semanticTimer)
+				semanticTimerC = nil
+				resetInFlightToolTimer(now, snapshot.oldestStartedAt)
+				return
+			}
+
+			stopInFlightToolTimer()
+			if snapshot.becameIdleAt.After(lastSemanticActivity) {
+				lastSemanticActivity = snapshot.becameIdleAt
+				remaining := semanticInactivityTimeout - now.Sub(snapshot.becameIdleAt)
+				if remaining <= 0 {
+					remaining = time.Nanosecond
+				}
+				resetTimer(semanticTimer, remaining)
+				semanticTimerC = semanticTimer.C
+			}
+		}
 
 		firstTurnNoProgressTimeout := codexFirstTurnNoProgressTimeout(semanticInactivityTimeout, opts.FirstTurnNoProgressTimeout)
 		var firstTurnNoProgressTimer *time.Timer
@@ -1621,6 +1986,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			firstTurnNoProgressTimerC = nil
 		}
 		defer stopFirstTurnNoProgressTimer()
+		observeFirstTurnToolProgress := func(snapshot codexInFlightToolSnapshot) bool {
+			if !firstTurnStarted || firstTurnProgressObserved || snapshot.firstProgressAt.IsZero() {
+				return false
+			}
+			firstTurnProgressObserved = true
+			finishFirstItemWaitAt(snapshot.firstProgressAt, "progress")
+			stopFirstTurnNoProgressTimer()
+			return true
+		}
 
 		finishRunContextDone := func() {
 			waitingForTurn = false
@@ -1656,15 +2030,21 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				// isCodexFirstTurnProgressActivity already refuses error:retry
 				// for the first-turn timer; this is the same rule applied to
 				// the timer that governs the rest of the run.
-				if activity != codexRetryActivity {
-					lastSemanticActivity = time.Now()
+				now := time.Now()
+				// Progress notifications, provider retries, and other traffic do
+				// not extend a running tool's hard deadline. A repeated heartbeat
+				// therefore cannot hold the run open forever.
+				if !waitingForUserInput && currentToolSnapshot.count == 0 && activity != codexRetryActivity {
+					lastSemanticActivity = now
 					resetTimer(semanticTimer, semanticInactivityTimeout)
+					semanticTimerC = semanticTimer.C
 				}
 				if activity == "status:running" && !firstTurnStarted {
 					firstTurnStarted = true
 					firstItemWait.start(time.Now())
 					firstTurnNoProgressTimer = time.NewTimer(firstTurnNoProgressTimeout)
 					firstTurnNoProgressTimerC = firstTurnNoProgressTimer.C
+					observeFirstTurnToolProgress(toolActivity.snapshot())
 				} else if firstTurnStarted && !firstTurnProgressObserved && isCodexFirstTurnProgressActivity(activity) {
 					firstTurnProgressObserved = true
 					if activity == "error:terminal" {
@@ -1674,7 +2054,43 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					}
 					stopFirstTurnNoProgressTimer()
 				}
+			case <-toolActivity.wakeup:
+				now := time.Now()
+				snapshot := toolActivity.snapshot()
+				applyToolSnapshot(snapshot, now)
+				observeFirstTurnToolProgress(snapshot)
+			case waiting := <-userInputWaitCh:
+				waitingForUserInput = waiting
+				if waiting {
+					stopTimer(semanticTimer)
+					semanticTimerC = nil
+					stopInFlightToolTimer()
+					stopFirstTurnNoProgressTimer()
+					continue
+				}
+				now := time.Now()
+				lastSemanticActivity = now
+				lastSemanticActivityDescription = "user_input_delivered"
+				resetTimer(semanticTimer, semanticInactivityTimeout)
+				semanticTimerC = semanticTimer.C
+				snapshot := toolActivity.snapshot()
+				currentToolSnapshot = snapshot
+				appliedToolActivityVersion = snapshot.version
+				if snapshot.count > 0 {
+					stopTimer(semanticTimer)
+					semanticTimerC = nil
+					resetInFlightToolTimer(now, snapshot.oldestStartedAt)
+				}
+				if firstTurnStarted && !firstTurnProgressObserved {
+					firstTurnNoProgressTimer = time.NewTimer(firstTurnNoProgressTimeout)
+					firstTurnNoProgressTimerC = firstTurnNoProgressTimer.C
+				}
 			case <-firstTurnNoProgressTimerC:
+				snapshot := toolActivity.snapshot()
+				if observeFirstTurnToolProgress(snapshot) {
+					applyToolSnapshot(snapshot, time.Now())
+					continue
+				}
 				waitingForTurn = false
 				finishFirstItemWait("no_progress_timeout")
 				finalStatus = "timeout"
@@ -1693,7 +2109,13 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"timeout", firstTurnNoProgressTimeout.String(),
 					"last_activity", lastSemanticActivityDescription,
 				)
-			case <-semanticTimer.C:
+			case <-semanticTimerC:
+				now := time.Now()
+				snapshot := toolActivity.snapshot()
+				if snapshot.version != appliedToolActivityVersion {
+					applyToolSnapshot(snapshot, now)
+					continue
+				}
 				waitingForTurn = false
 				finishFirstItemWait("semantic_inactivity_timeout")
 				finalStatus = "timeout"
@@ -1712,6 +2134,41 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 					"timeout", semanticInactivityTimeout.String(),
 					"last_activity", lastSemanticActivityDescription,
 					"idle_for", time.Since(lastSemanticActivity).Round(time.Millisecond).String(),
+				)
+			case <-inFlightToolTimerC:
+				now := time.Now()
+				snapshot := toolActivity.snapshot()
+				if snapshot.version != appliedToolActivityVersion {
+					applyToolSnapshot(snapshot, now)
+					continue
+				}
+				if snapshot.count == 0 {
+					stopInFlightToolTimer()
+					continue
+				}
+				if now.Sub(snapshot.oldestStartedAt) < inFlightToolTimeout {
+					resetInFlightToolTimer(now, snapshot.oldestStartedAt)
+					continue
+				}
+				waitingForTurn = false
+				finishFirstItemWait("in_flight_tool_timeout")
+				finalStatus = "timeout"
+				callID := snapshot.oldestCallID
+				timeoutDiagnostic = codexTimeoutDiagnostic{
+					Kind:         codexTimeoutInFlightTool,
+					Timeout:      inFlightToolTimeout,
+					LastActivity: "tool_in_flight:" + callID,
+					ThreadID:     threadID,
+					TurnID:       c.turnID,
+					Model:        opts.Model,
+				}
+				b.cfg.Logger.Warn(CodexSemanticInactivityMarker,
+					"watchdog", "in_flight_tool",
+					"pid", cmd.Process.Pid,
+					"thread_id", threadID,
+					"turn_id", c.turnID,
+					"call_id", callID,
+					"timeout", inFlightToolTimeout.String(),
 				)
 			case <-runCtx.Done():
 				finishRunContextDone()
@@ -1839,21 +2296,22 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		var usageMap map[string]TokenUsage
 		c.usageMu.Lock()
 		u := c.usage
+		executionEvidence := cloneExecutionEvidence(c.executionEvidence)
+		nativeUsageSeen := c.nativeUsageSeen
 		c.usageMu.Unlock()
 
 		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
 		// Codex writes token_count events to $CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl;
 		// scan this backend's per-task CODEX_HOME, since sessions are isolated
 		// there rather than in the shared ~/.codex/sessions (MUL-4424).
-		if u.InputTokens == 0 && u.OutputTokens == 0 {
+		if !nativeUsageSeen && executionEvidence == nil && u.InputTokens == 0 && u.OutputTokens == 0 {
 			taskCodexHome := strings.TrimSpace(b.cfg.Env["CODEX_HOME"])
 			if scanned := scanCodexSessionUsage(startTime, taskCodexHome, threadID, resumed); scanned != nil {
 				u = scanned.usage
-				if scanned.model != "" && opts.Model == "" {
-					opts.Model = scanned.model
-				}
+				executionEvidence = cloneExecutionEvidence(scanned.executionEvidence)
 			}
 		}
+		executionEvidence = codexResponseMetadataExecutionEvidence(executionEvidence, responseMetadataProjection)
 
 		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
 			model := opts.Model
@@ -1863,13 +2321,14 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			usageMap = map[string]TokenUsage{model: u}
 		}
 
-		resCh <- Result{
+		result = Result{
 			Status:                       finalStatus,
 			Output:                       finalOutput,
 			Error:                        finalError,
 			SessionID:                    threadID,
 			DurationMs:                   duration.Milliseconds(),
 			Usage:                        usageMap,
+			ExecutionEvidence:            executionEvidence,
 			codexStartupRefreshRetrySafe: startupRefreshRetrySafe,
 		}
 	}()
@@ -1928,6 +2387,17 @@ func codexTurnInput(prompt string, resumeExpected, resumed bool, notice string) 
 // turn/start calls must reference, and resumed indicates whether the prior
 // thread was picked up (only useful for logging).
 func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions, logger *slog.Logger) (string, bool, error) {
+	var writablePolicy *codexTaskWritablePolicy
+	if len(opts.CodexTaskWritableRoots) > 0 {
+		config, err := readCodexConfiguration(ctx, c, opts.Cwd, codexConfigurationReadPurposeTaskEffective)
+		if err != nil {
+			return "", false, fmt.Errorf("Codex task cache policy preflight: %w", err)
+		}
+		writablePolicy, err = resolveCodexTaskWritablePolicy(config.Config, opts.CodexTaskWritableRoots)
+		if err != nil {
+			return "", false, err
+		}
+	}
 	if priorThreadID := opts.ResumeSessionID; priorThreadID != "" {
 		// thread/resume reuses the thread's persisted model and reasoning
 		// effort; only override fields the daemon actually cares about.
@@ -1946,6 +2416,11 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		// resume must honour the live config, not the stored one.
 		applyCodexReasoningEffort(resumeParams, opts.ThinkingLevel)
 		applyCodexServiceTier(resumeParams, opts.ServiceTier)
+		applyCodexPluginMCPOverrides(resumeParams, opts.codexPluginMCP)
+		applyCodexTaskWritablePolicy(resumeParams, writablePolicy)
+		if err := applyCodexPluginSkillPolicy(ctx, c, opts, resumeParams); err != nil {
+			return "", false, err
+		}
 		c.threadSetupMethod = "thread/resume"
 		c.threadSetupStarted = time.Now()
 		logger.Info("codex lifecycle",
@@ -1958,8 +2433,15 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 			"method", c.threadSetupMethod,
 		)
 		resumeResult, err := c.request(ctx, "thread/resume", resumeParams)
+		if policyErr := verifyCodexPluginSkillPolicy(c.cfg, opts); policyErr != nil {
+			return "", false, policyErr
+		}
 		if err == nil {
+			if err := verifyCodexTaskWritablePolicy(resumeResult, writablePolicy); err != nil {
+				return "", false, err
+			}
 			if threadID := extractThreadID(resumeResult); threadID != "" {
+				observeCodexThreadConfigurationResponse(c, opts.Cwd, "thread/resume", threadID, resumeResult)
 				logger.Info("codex lifecycle",
 					"phase", "thread_resume_response",
 					"task_id", c.cfg.TaskID,
@@ -2006,6 +2488,11 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	}
 	applyCodexReasoningEffort(startParams, opts.ThinkingLevel)
 	applyCodexServiceTier(startParams, opts.ServiceTier)
+	applyCodexPluginMCPOverrides(startParams, opts.codexPluginMCP)
+	applyCodexTaskWritablePolicy(startParams, writablePolicy)
+	if err := applyCodexPluginSkillPolicy(ctx, c, opts, startParams); err != nil {
+		return "", false, err
+	}
 	c.threadSetupMethod = "thread/start"
 	c.threadSetupStarted = time.Now()
 	logger.Info("codex lifecycle",
@@ -2018,13 +2505,20 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		"method", c.threadSetupMethod,
 	)
 	startResult, err := c.request(ctx, "thread/start", startParams)
+	if policyErr := verifyCodexPluginSkillPolicy(c.cfg, opts); policyErr != nil {
+		return "", false, policyErr
+	}
 	if err != nil {
 		return "", false, fmt.Errorf("codex thread/start failed: %w", err)
+	}
+	if err := verifyCodexTaskWritablePolicy(startResult, writablePolicy); err != nil {
+		return "", false, err
 	}
 	threadID := extractThreadID(startResult)
 	if threadID == "" {
 		return "", false, fmt.Errorf("codex thread/start returned no thread ID")
 	}
+	observeCodexThreadConfigurationResponse(c, opts.Cwd, "thread/start", threadID, startResult)
 	logger.Info("codex lifecycle",
 		"phase", "thread_start_response",
 		"task_id", c.cfg.TaskID,
@@ -2184,6 +2678,13 @@ func buildCodexTimeoutDiagnosticError(diag codexTimeoutDiagnostic, stderrTail st
 			nonEmptyCodexDiagnosticValue(diag.LastActivity),
 			formatCodexDiagnosticFields(diag),
 		)
+	case codexTimeoutInFlightTool:
+		msg = fmt.Sprintf("%s: in-flight tool exceeded %s (last activity: %s; %s)",
+			CodexSemanticInactivityMarker,
+			diag.Timeout,
+			nonEmptyCodexDiagnosticValue(diag.LastActivity),
+			formatCodexDiagnosticFields(diag),
+		)
 	default:
 		msg = "codex timed out"
 	}
@@ -2293,9 +2794,149 @@ func describeCodexSemanticActivity(msg Message) string {
 	return string(msg.Type)
 }
 
+type codexToolActivity int
+
+const (
+	codexToolStarted codexToolActivity = iota + 1
+	codexToolCompleted
+)
+
+type codexToolTransition struct {
+	activity codexToolActivity
+	callID   string
+}
+
+type codexInFlightToolSnapshot struct {
+	version         uint64
+	count           int
+	oldestCallID    string
+	oldestStartedAt time.Time
+	becameIdleAt    time.Time
+	firstProgressAt time.Time
+}
+
+// codexInFlightToolState records lifecycle transitions synchronously on the
+// stdout reader. The buffered channel is only a coalesced wakeup: correctness
+// lives in the mutex-protected state, so a notification burst cannot block the
+// reader or lose a start/completion when the lifecycle goroutine is busy with
+// an RPC handshake.
+type codexInFlightToolState struct {
+	mu              sync.Mutex
+	inFlight        map[string]time.Time
+	turnStartedAt   time.Time
+	firstProgressAt time.Time
+	becameIdleAt    time.Time
+	version         uint64
+	wakeup          chan struct{}
+}
+
+func newCodexInFlightToolState() *codexInFlightToolState {
+	return &codexInFlightToolState{
+		inFlight: make(map[string]time.Time),
+		wakeup:   make(chan struct{}, 1),
+	}
+}
+
+func (s *codexInFlightToolState) observeTurnStarted(observedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnStartedAt.IsZero() {
+		s.turnStartedAt = observedAt
+	}
+}
+
+func (s *codexInFlightToolState) observe(transition codexToolTransition, observedAt time.Time) {
+	s.mu.Lock()
+	changed := false
+	switch transition.activity {
+	case codexToolStarted:
+		if _, exists := s.inFlight[transition.callID]; !exists {
+			s.inFlight[transition.callID] = observedAt
+			if !s.turnStartedAt.IsZero() && s.firstProgressAt.IsZero() {
+				s.firstProgressAt = observedAt
+			}
+			changed = true
+		}
+	case codexToolCompleted:
+		if _, exists := s.inFlight[transition.callID]; exists {
+			delete(s.inFlight, transition.callID)
+			if len(s.inFlight) == 0 {
+				s.becameIdleAt = observedAt
+			}
+			changed = true
+		}
+	}
+	if changed {
+		s.version++
+	}
+	s.mu.Unlock()
+
+	if changed {
+		select {
+		case s.wakeup <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (s *codexInFlightToolState) snapshot() codexInFlightToolSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot := codexInFlightToolSnapshot{
+		version:         s.version,
+		count:           len(s.inFlight),
+		becameIdleAt:    s.becameIdleAt,
+		firstProgressAt: s.firstProgressAt,
+	}
+	for callID, startedAt := range s.inFlight {
+		if snapshot.oldestStartedAt.IsZero() || startedAt.Before(snapshot.oldestStartedAt) {
+			snapshot.oldestCallID = callID
+			snapshot.oldestStartedAt = startedAt
+		}
+	}
+	return snapshot
+}
+
+func codexToolTransitionFromMessage(msg Message) (codexToolTransition, bool) {
+	if msg.CallID == "" {
+		return codexToolTransition{}, false
+	}
+	switch msg.Type {
+	case MessageToolUse:
+		return codexToolTransition{activity: codexToolStarted, callID: msg.CallID}, true
+	case MessageToolResult:
+		return codexToolTransition{activity: codexToolCompleted, callID: msg.CallID}, true
+	default:
+		return codexToolTransition{}, false
+	}
+}
+
+func codexToolTransitionFromItem(method, itemType, itemID string) (codexToolTransition, bool) {
+	if itemID == "" {
+		return codexToolTransition{}, false
+	}
+	// Only native work items with paired lifecycles receive the tool budget.
+	// Display items and unknown future variants retain the semantic timeout.
+	switch itemType {
+	case "commandExecution", "fileChange", "mcpToolCall", "collabAgentToolCall",
+		"dynamicToolCall", "webSearch", "imageView", "sleep", "imageGeneration":
+	default:
+		return codexToolTransition{}, false
+	}
+	switch method {
+	case "item/started":
+		return codexToolTransition{activity: codexToolStarted, callID: itemID}, true
+	case "item/completed":
+		return codexToolTransition{activity: codexToolCompleted, callID: itemID}, true
+	default:
+		return codexToolTransition{}, false
+	}
+}
+
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
+	pluginMCPPreflight     atomic.Bool
 	cfg                    Config
 	stdin                  interface{ Write([]byte) (int, error) }
 	mu                     sync.Mutex
@@ -2313,8 +2954,14 @@ type codexClient struct {
 	threadID               string
 	turnID                 string
 	onMessage              func(Message)
+	onToolTransition       func(codexToolTransition)
 	onSemanticActivity     func(description string)
 	onTurnDone             func(aborted bool)
+	requestContext         context.Context
+	requestUserInput       func(context.Context, PendingInputRequest) (PendingInputAnswer, error)
+	onUserInputWait        func(bool)
+	onUserInputStatus      func(string)
+	pendingInputs          *pendingInputCoordinator
 	// onFinalAnswer fires only for an agent message the app-server itself
 	// labelled `phase: "final_answer"` — the turn's deliverable, as opposed to
 	// the intermediate agent messages that narrate work between tool calls.
@@ -2335,6 +2982,14 @@ type codexClient struct {
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
+	// Native v2 usage is cumulative for the thread. The first current-turn
+	// notification establishes the pre-turn baseline from total-last; later
+	// notifications replace the current delta instead of being summed.
+	nativeUsageSeen     bool
+	nativeUsageBaseline *codexNativeUsageBreakdown
+	// executionEvidence retains explicit zeroes and missing buckets. Codex's
+	// configured/thread model is intentionally not provider-reported identity.
+	executionEvidence *ExecutionEvidence
 
 	turnErrorMu sync.Mutex
 	turnError   string // captured from turn/completed status=failed or terminal error notifications
@@ -2393,6 +3048,15 @@ func (g *codexTurnNotificationGate) accept(method string, params map[string]any)
 		}
 		turnID := extractNestedString(params, "turn", "id")
 		return g.turnID == "" || turnID == "" || turnID == g.turnID
+	case method == "thread/tokenUsage/updated":
+		// This v2 notification always carries turnId, so unlike compatibility
+		// streams with no turn identity it can be held until the current turn is
+		// known and matched exactly.
+		if !g.started {
+			return false
+		}
+		turnID, _ := params["turnId"].(string)
+		return g.turnID == "" || turnID == "" || turnID == g.turnID
 	case method == "thread/status/changed" || strings.HasPrefix(method, "item/"):
 		if !g.started {
 			return true
@@ -2448,7 +3112,7 @@ func (e *codexHandshakeTimeoutError) Unwrap() error {
 
 func isCodexHandshakeRPC(method string) bool {
 	switch method {
-	case "initialize", "thread/start", "thread/resume", "thread/name/set", "turn/start":
+	case "initialize", "config/read", "thread/start", "thread/resume", "thread/name/set", "turn/start":
 		return true
 	default:
 		return false
@@ -2574,17 +3238,25 @@ func (c *codexClient) notify(method string) {
 }
 
 func (c *codexClient) respond(id int, result any) {
+	encodedID, _ := json.Marshal(id)
+	_ = c.respondRaw(encodedID, result)
+}
+
+func (c *codexClient) respondRaw(id json.RawMessage, result any) error {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"result":  result,
 	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	return writeJSONLine(c.stdin, msg)
 }
 
 func (c *codexClient) respondError(id int, code int, message string) {
+	encodedID, _ := json.Marshal(id)
+	_ = c.respondErrorRaw(encodedID, code, message)
+}
+
+func (c *codexClient) respondErrorRaw(id json.RawMessage, code int, message string) error {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -2593,9 +3265,7 @@ func (c *codexClient) respondError(id int, code int, message string) {
 			"message": message,
 		},
 	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	return writeJSONLine(c.stdin, msg)
 }
 
 func (c *codexClient) closeAllPending(err error) {
@@ -2673,6 +3343,24 @@ func (c *codexClient) handleLine(line string) {
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
 		return
 	}
+	// The names-only preparation protocol must not execute server requests or
+	// forward unsolicited provider text into task messages/logs before a thread.
+	if c.pluginMCPPreflight.Load() {
+		_, hasID := raw["id"]
+		_, hasResult := raw["result"]
+		_, hasError := raw["error"]
+		if !hasID || (!hasResult && !hasError) {
+			var method string
+			_ = json.Unmarshal(raw["method"], &method)
+			// 0.153.4 emits this passive status after initialize. Its payload
+			// is irrelevant to MCP selection and must not enter task logs.
+			if !hasID && method == "remoteControl/status/changed" {
+				return
+			}
+			c.markProcessExited(codexPluginMCPError("received unexpected pre-thread activity"))
+			return
+		}
+	}
 
 	// Check if it's a response to our request
 	if _, hasID := raw["id"]; hasID {
@@ -2734,6 +3422,12 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	_ = json.Unmarshal(raw["method"], &method)
 
 	switch method {
+	case "item/tool/requestUserInput":
+		if c.requestUserInput == nil {
+			c.unsupportedServerRequest(raw["id"], method)
+			return
+		}
+		c.handleRequestUserInput(raw["id"], raw["params"])
 	case "item/commandExecution/requestApproval", "execCommandApproval":
 		if denied, rule := agentguard.DeniedRequest(raw["params"]); denied {
 			if c.cfg.Logger != nil {
@@ -2778,10 +3472,125 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 		}
 		c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
 	default:
-		msg := fmt.Sprintf("unsupported codex app-server request: %s", method)
-		c.cfg.Logger.Warn("codex: unhandled server request", "method", method, "id", id)
-		c.setTurnError(msg)
-		c.respondError(id, -32601, msg)
+		c.unsupportedServerRequest(raw["id"], method)
+	}
+}
+
+func (c *codexClient) unsupportedServerRequest(id json.RawMessage, method string) {
+	msg := fmt.Sprintf("unsupported codex app-server request: %s", method)
+	c.cfg.Logger.Warn("codex: unhandled server request", "method", method)
+	c.setTurnError(msg)
+	_ = c.respondErrorRaw(id, -32601, msg)
+}
+
+type codexUserInputParams struct {
+	ThreadID   string                   `json:"threadId"`
+	TurnID     string                   `json:"turnId"`
+	ItemID     string                   `json:"itemId"`
+	IsBlocking *bool                    `json:"isBlocking"`
+	Questions  []codexUserInputQuestion `json:"questions"`
+}
+
+type codexUserInputQuestion struct {
+	ID       string               `json:"id"`
+	Header   string               `json:"header"`
+	Question string               `json:"question"`
+	Options  []PendingInputOption `json:"options"`
+	IsOther  bool                 `json:"isOther"`
+	IsSecret bool                 `json:"isSecret"`
+}
+
+func (c *codexClient) handleRequestUserInput(id, params json.RawMessage) {
+	var native codexUserInputParams
+	if err := json.Unmarshal(params, &native); err != nil || native.IsBlocking == nil ||
+		strings.TrimSpace(native.ThreadID) == "" || strings.TrimSpace(native.TurnID) == "" || strings.TrimSpace(native.ItemID) == "" {
+		_ = c.respondErrorRaw(id, -32602, "user input request protocol fields are required")
+		return
+	}
+	questions := make([]PendingInputQuestion, 0, len(native.Questions))
+	for _, question := range native.Questions {
+		if question.IsSecret {
+			_ = c.respondErrorRaw(id, -32602, "secret input is not supported")
+			return
+		}
+		questions = append(questions, PendingInputQuestion{
+			ID: question.ID, Header: question.Header, Question: question.Question,
+			Options: append([]PendingInputOption{}, question.Options...), AllowOther: question.IsOther || len(question.Options) == 0,
+			// Codex's generated request schema has no multi-select declaration.
+			MultiSelect: false,
+		})
+	}
+	request := PendingInputRequest{
+		Version:    PendingInputVersion1,
+		RequestKey: NewPendingInputRequestKey("codex", native.ThreadID, native.TurnID, native.ItemID),
+		// Default-mode Codex sends isBlocking=false; the RPC still accepts a
+		// deferred response. Managed issue tasks wait for the real owner answer.
+		Blocking: true, Questions: questions,
+	}
+	if err := ValidatePendingInputRequest(request); err != nil {
+		_ = c.respondErrorRaw(id, -32602, "user input request is invalid or unsupported")
+		return
+	}
+	if c.pendingInputs == nil {
+		c.pendingInputs = newPendingInputCoordinator()
+	}
+	nativeID := string(id)
+	switch c.pendingInputs.begin(nativeID, request.RequestKey, pendingInputPayloadHash(request)) {
+	case pendingInputDuplicate:
+		return
+	case pendingInputConflict:
+		_ = c.respondErrorRaw(id, -32600, "request id was reused for different user input")
+		return
+	case pendingInputLimitReached:
+		_ = c.respondErrorRaw(id, -32000, "too many user input requests in this execution")
+		return
+	}
+
+	go c.fulfillRequestUserInput(nativeID, id, request)
+}
+
+func (c *codexClient) fulfillRequestUserInput(nativeID string, id json.RawMessage, request PendingInputRequest) {
+	defer c.pendingInputs.finish(nativeID)
+	ctx := c.requestContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if c.onUserInputWait != nil {
+		c.onUserInputWait(true)
+		defer c.onUserInputWait(false)
+	}
+	if c.onUserInputStatus != nil {
+		c.onUserInputStatus("waiting_for_input")
+		defer c.onUserInputStatus("running")
+	}
+	answer, err := runPendingInputCallback(ctx, c.requestUserInput, request, func() {
+		if c.onUserInputStatus != nil {
+			c.onUserInputStatus("waiting_for_input")
+		}
+	})
+	if err != nil {
+		c.setTurnError("user input request did not receive an answer")
+		_ = c.respondErrorRaw(id, -32000, "user input request did not receive an answer")
+		return
+	}
+	if err := ValidatePendingInputAnswer(request, answer); err != nil {
+		c.setTurnError("user input answer was invalid")
+		_ = c.respondErrorRaw(id, -32602, "user input answer was invalid")
+		return
+	}
+	nativeAnswers := make(map[string]map[string][]string, len(answer.Answers))
+	for questionID, values := range answer.Answers {
+		nativeAnswers[questionID] = map[string][]string{"answers": values}
+	}
+	if err := c.respondRaw(id, map[string]any{"answers": nativeAnswers}); err != nil {
+		c.setTurnError("failed to deliver user input answer to Codex")
+		return
+	}
+	if err := answer.MarkDelivered(ctx); err != nil {
+		c.pendingInputs.recordDeliveryFailure()
+		if c.cfg.Logger != nil {
+			c.cfg.Logger.Warn("codex: failed to acknowledge delivered user input")
+		}
 	}
 }
 
@@ -2900,7 +3709,8 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 	if c.notificationProtocol != "legacy" {
 		if c.notificationProtocol == "unknown" &&
 			(method == "turn/started" || method == "turn/completed" ||
-				method == "thread/started" || method == "error" || strings.HasPrefix(method, "item/")) {
+				method == "thread/started" || method == "thread/tokenUsage/updated" ||
+				method == "error" || strings.HasPrefix(method, "item/")) {
 			c.notificationProtocol = "raw"
 		}
 
@@ -3360,6 +4170,9 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
 		}
 
+	case "thread/tokenUsage/updated":
+		c.updateNativeTokenUsage(params)
+
 	// The plan is a TURN notification, not a tool call — which is why looking
 	// for an `update_plan` tool found nothing. Normalised to the `todo_write`
 	// name the other backends already use so one renderer serves them all.
@@ -3450,6 +4263,11 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)
+	// Account for raw work before lossy message conversion or coalesced wakeups.
+	// Normalized command/file/MCP transitions below are idempotent in the state.
+	if transition, ok := codexToolTransitionFromItem(method, itemType, itemID); ok && c.onToolTransition != nil {
+		c.onToolTransition(transition)
+	}
 	if isCodexItemProgressActivity(method) && c.onSemanticActivity != nil {
 		c.onSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
 	}
@@ -3558,7 +4376,7 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 }
 
 func isCodexItemProgressActivity(method string) bool {
-	return strings.HasPrefix(method, "item/")
+	return strings.HasPrefix(method, "item/") && !strings.HasSuffix(method, "/progress")
 }
 
 func describeCodexItemProgressActivity(method, itemType, itemID string) string {
@@ -3588,6 +4406,9 @@ func (c *codexClient) extractUsageFromMap(data map[string]any) {
 
 	c.usageMu.Lock()
 	defer c.usageMu.Unlock()
+	if c.nativeUsageSeen {
+		return
+	}
 
 	// Codex reports cached input as a prompt-token detail: cached_input_tokens
 	// are included in input_tokens. Persist mutually-exclusive buckets so
@@ -3597,7 +4418,140 @@ func (c *codexClient) extractUsageFromMap(data map[string]any) {
 	c.usage.InputTokens += codexUncachedInputTokens(inputTokens, cacheReadTokens)
 	c.usage.OutputTokens += codexInt64(usageMap, "output_tokens", "output", "completion_tokens")
 	c.usage.CacheReadTokens += cacheReadTokens
-	c.usage.CacheWriteTokens += codexInt64(usageMap, "cache_write_tokens", "cache_creation_input_tokens")
+	c.usage.CacheWriteTokens += codexInt64(usageMap, "cache_write_input_tokens", "cache_write_tokens", "cache_creation_input_tokens")
+	c.executionEvidence = appendObservedExecutionEvidence(c.executionEvidence, codexUsageExecutionEvidence(usageMap))
+}
+
+type codexNativeUsageBreakdown struct {
+	input      *int64
+	cacheRead  *int64
+	cacheWrite *int64
+	output     *int64
+}
+
+func (c *codexClient) updateNativeTokenUsage(params map[string]any) {
+	tokenUsage, ok := params["tokenUsage"].(map[string]any)
+	if !ok {
+		return
+	}
+	totalMap, totalOK := tokenUsage["total"].(map[string]any)
+	lastMap, lastOK := tokenUsage["last"].(map[string]any)
+	if !totalOK || !lastOK {
+		return
+	}
+	total := codexNativeUsageFromMap(totalMap)
+	last := codexNativeUsageFromMap(lastMap)
+
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	if c.nativeUsageBaseline == nil {
+		baseline := subtractCodexNativeUsage(total, last)
+		c.nativeUsageBaseline = &baseline
+	}
+	current := subtractCodexNativeUsage(total, *c.nativeUsageBaseline)
+	c.nativeUsageSeen = true
+	c.usage = tokenUsageFromNative(current)
+	c.executionEvidence = codexNativeUsageExecutionEvidence(current)
+}
+
+func codexNativeUsageFromMap(usage map[string]any) codexNativeUsageBreakdown {
+	input, inputKnown := codexInt64Present(usage, "inputTokens")
+	cacheRead, cacheReadKnown := codexInt64Present(usage, "cachedInputTokens")
+	cacheWrite, cacheWriteKnown := codexInt64Present(usage, "cacheWriteInputTokens")
+	output, outputKnown := codexInt64Present(usage, "outputTokens")
+	if !cacheWriteKnown {
+		// The v2 TokenUsageBreakdown schema defines this field with default 0.
+		cacheWrite = 0
+		cacheWriteKnown = true
+	}
+	return codexNativeUsageBreakdown{
+		input:      codexEvidenceInt64(input, inputKnown),
+		cacheRead:  codexEvidenceInt64(cacheRead, cacheReadKnown),
+		cacheWrite: codexEvidenceInt64(cacheWrite, cacheWriteKnown),
+		output:     codexEvidenceInt64(output, outputKnown),
+	}
+}
+
+func subtractCodexNativeUsage(total, baseline codexNativeUsageBreakdown) codexNativeUsageBreakdown {
+	return codexNativeUsageBreakdown{
+		input:      subtractEvidenceCounter(total.input, baseline.input),
+		cacheRead:  subtractEvidenceCounter(total.cacheRead, baseline.cacheRead),
+		cacheWrite: subtractEvidenceCounter(total.cacheWrite, baseline.cacheWrite),
+		output:     subtractEvidenceCounter(total.output, baseline.output),
+	}
+}
+
+func subtractEvidenceCounter(total, baseline *int64) *int64 {
+	if total == nil || baseline == nil {
+		return nil
+	}
+	value := nonNegativeTokenDelta(*total, *baseline)
+	return &value
+}
+
+func tokenUsageFromNative(usage codexNativeUsageBreakdown) TokenUsage {
+	result := TokenUsage{
+		CacheReadTokens:  evidenceInt64Value(usage.cacheRead),
+		CacheWriteTokens: evidenceInt64Value(usage.cacheWrite),
+		OutputTokens:     evidenceInt64Value(usage.output),
+	}
+	if usage.input != nil && usage.cacheRead != nil {
+		result.InputTokens = codexUncachedInputTokens(*usage.input, *usage.cacheRead)
+	}
+	return result
+}
+
+func codexNativeUsageExecutionEvidence(usage codexNativeUsageBreakdown) *ExecutionEvidence {
+	var uncached *int64
+	if usage.input != nil && usage.cacheRead != nil && *usage.cacheRead <= *usage.input {
+		value := *usage.input - *usage.cacheRead
+		uncached = &value
+	}
+	return &ExecutionEvidence{
+		Usage: UsageEvidence{
+			InputUncachedTokens: uncached, InputCacheReadTokens: cloneEvidenceInt64(usage.cacheRead),
+			InputCacheWriteTokens: cloneEvidenceInt64(usage.cacheWrite), OutputTokens: cloneEvidenceInt64(usage.output),
+			Complete: uncached != nil && usage.cacheRead != nil && usage.cacheWrite != nil && usage.output != nil,
+			Source:   EvidenceSourceProviderEvent,
+		},
+		ProviderModel: ProviderModelEvidence{Source: EvidenceSourceMissing},
+		ProviderCost:  ProviderCostEvidence{Authority: CostAuthorityMissing, Basis: CostBasisMissing, Source: EvidenceSourceMissing},
+	}
+}
+
+func codexEvidenceInt64(value int64, known bool) *int64 {
+	if !known {
+		return nil
+	}
+	return &value
+}
+
+func codexUsageExecutionEvidence(usage map[string]any) *ExecutionEvidence {
+	input, inputKnown := codexInt64Present(usage, "input_tokens", "input", "prompt_tokens")
+	cacheRead, cacheReadKnown := codexInt64Present(usage, "cached_input_tokens", "cache_read_tokens", "cache_read_input_tokens")
+	cacheWrite, cacheWriteKnown := codexInt64Present(usage, "cache_write_input_tokens", "cache_write_tokens", "cache_creation_input_tokens")
+	output, outputKnown := codexInt64Present(usage, "output_tokens", "output", "completion_tokens")
+
+	var uncached *int64
+	if inputKnown && cacheReadKnown && cacheRead <= input {
+		value := input - cacheRead
+		uncached = &value
+	}
+	result := &ExecutionEvidence{
+		Usage:         UsageEvidence{InputUncachedTokens: uncached, Complete: inputKnown && cacheReadKnown && cacheWriteKnown && outputKnown && uncached != nil, Source: EvidenceSourceProviderEvent},
+		ProviderModel: ProviderModelEvidence{Source: EvidenceSourceMissing},
+		ProviderCost:  ProviderCostEvidence{Authority: CostAuthorityMissing, Basis: CostBasisMissing, Source: EvidenceSourceMissing},
+	}
+	if cacheReadKnown {
+		result.Usage.InputCacheReadTokens = &cacheRead
+	}
+	if cacheWriteKnown {
+		result.Usage.InputCacheWriteTokens = &cacheWrite
+	}
+	if outputKnown {
+		result.Usage.OutputTokens = &output
+	}
+	return result
 }
 
 func codexUncachedInputTokens(inputTokens, cachedInputTokens int64) int64 {
@@ -3610,27 +4564,37 @@ func codexUncachedInputTokens(inputTokens, cachedInputTokens int64) int64 {
 
 // codexInt64 returns the first non-zero int64 value from the map for the given keys.
 func codexInt64(m map[string]any, keys ...string) int64 {
+	value, _ := codexInt64Present(m, keys...)
+	return value
+}
+
+func codexInt64Present(m map[string]any, keys ...string) (int64, bool) {
 	for _, key := range keys {
 		switch v := m[key].(type) {
 		case float64:
-			if v != 0 {
-				return int64(v)
+			if v >= 0 && v <= math.MaxInt64 && v == math.Trunc(v) {
+				return int64(v), true
 			}
 		case int64:
-			if v != 0 {
-				return v
+			if v >= 0 {
+				return v, true
+			}
+		case int:
+			if v >= 0 {
+				return int64(v), true
 			}
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // ── Codex session log scanner ──
 
 // codexSessionUsage holds usage extracted from a Codex session JSONL file.
 type codexSessionUsage struct {
-	usage TokenUsage
-	model string
+	usage             TokenUsage
+	executionEvidence *ExecutionEvidence
+	model             string
 }
 
 // scanCodexSessionUsage extracts usage for threadID from its Codex rollout.
@@ -3671,7 +4635,7 @@ func scanCodexSessionUsage(startTime time.Time, codexHome, threadID string, resu
 	// They have the same owner, so prefer the latest deterministically without ever
 	// crossing into a different thread's rollout.
 	result := parseCodexSessionFileSince(files[len(files)-1].path, startTime, resumed)
-	if result == nil || (result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 &&
+	if result == nil || (result.executionEvidence == nil && result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 &&
 		result.usage.CacheReadTokens == 0 && result.usage.CacheWriteTokens == 0) {
 		return nil
 	}
@@ -3801,7 +4765,46 @@ type codexRawTokenUsage struct {
 	OutputTokens          int64 `json:"output_tokens"`
 	CachedInputTokens     int64 `json:"cached_input_tokens"`
 	CacheReadInputTokens  int64 `json:"cache_read_input_tokens"`
+	CacheWriteInputTokens int64 `json:"cache_write_input_tokens"`
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
+	inputKnown            bool
+	outputKnown           bool
+	cachedInputKnown      bool
+	cacheReadInputKnown   bool
+	cacheWriteInputKnown  bool
+}
+
+func (u *codexRawTokenUsage) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		InputTokens           *int64 `json:"input_tokens"`
+		OutputTokens          *int64 `json:"output_tokens"`
+		CachedInputTokens     *int64 `json:"cached_input_tokens"`
+		CacheReadInputTokens  *int64 `json:"cache_read_input_tokens"`
+		CacheWriteInputTokens *int64 `json:"cache_write_input_tokens"`
+		ReasoningOutputTokens *int64 `json:"reasoning_output_tokens"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.InputTokens != nil && *wire.InputTokens >= 0 {
+		u.InputTokens, u.inputKnown = *wire.InputTokens, true
+	}
+	if wire.OutputTokens != nil && *wire.OutputTokens >= 0 {
+		u.OutputTokens, u.outputKnown = *wire.OutputTokens, true
+	}
+	if wire.CachedInputTokens != nil && *wire.CachedInputTokens >= 0 {
+		u.CachedInputTokens, u.cachedInputKnown = *wire.CachedInputTokens, true
+	}
+	if wire.CacheReadInputTokens != nil && *wire.CacheReadInputTokens >= 0 {
+		u.CacheReadInputTokens, u.cacheReadInputKnown = *wire.CacheReadInputTokens, true
+	}
+	if wire.CacheWriteInputTokens != nil && *wire.CacheWriteInputTokens >= 0 {
+		u.CacheWriteInputTokens, u.cacheWriteInputKnown = *wire.CacheWriteInputTokens, true
+	}
+	if wire.ReasoningOutputTokens != nil && *wire.ReasoningOutputTokens >= 0 {
+		u.ReasoningOutputTokens = *wire.ReasoningOutputTokens
+	}
+	return nil
 }
 
 // codexSessionTokenCount represents a token_count event in Codex JSONL.
@@ -3840,6 +4843,7 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	var result codexSessionUsage
 	var previousTotal, accumulated, finalUsage codexRawTokenUsage
 	previousTotalFound := false
+	accumulatedFound := false
 	finalUsageFound := false
 	afterStartBoundary := false
 
@@ -3880,7 +4884,12 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 					if previousTotalFound {
 						delta = subtractCodexRawTokenUsage(current, previousTotal)
 					}
-					accumulated = addCodexRawTokenUsage(accumulated, delta)
+					if accumulatedFound {
+						accumulated = addCodexRawTokenUsage(accumulated, delta)
+					} else {
+						accumulated = delta
+						accumulatedFound = true
+					}
 					finalUsage = accumulated
 					finalUsageFound = true
 				}
@@ -3903,10 +4912,12 @@ func parseCodexSessionFileSince(path string, startTime time.Time, resumed bool) 
 	}
 	cachedTokens := finalUsage.CachedInputTokens
 	result.usage = TokenUsage{
-		InputTokens:     codexUncachedInputTokens(finalUsage.InputTokens, cachedTokens),
-		OutputTokens:    finalUsage.OutputTokens + finalUsage.ReasoningOutputTokens,
-		CacheReadTokens: cachedTokens,
+		InputTokens:      codexUncachedInputTokens(finalUsage.InputTokens, cachedTokens),
+		OutputTokens:     finalUsage.OutputTokens,
+		CacheReadTokens:  cachedTokens,
+		CacheWriteTokens: finalUsage.CacheWriteInputTokens,
 	}
+	result.executionEvidence = codexRawUsageExecutionEvidence(finalUsage)
 	return &result
 }
 
@@ -3920,15 +4931,24 @@ func subtractCodexRawTokenUsage(total, baseline codexRawTokenUsage) codexRawToke
 		InputTokens:           nonNegativeTokenDelta(total.InputTokens, baseline.InputTokens),
 		OutputTokens:          nonNegativeTokenDelta(total.OutputTokens, baseline.OutputTokens),
 		CachedInputTokens:     nonNegativeTokenDelta(total.CachedInputTokens, baseline.CachedInputTokens),
+		CacheWriteInputTokens: nonNegativeTokenDelta(total.CacheWriteInputTokens, baseline.CacheWriteInputTokens),
 		ReasoningOutputTokens: nonNegativeTokenDelta(total.ReasoningOutputTokens, baseline.ReasoningOutputTokens),
+		inputKnown:            total.inputKnown && baseline.inputKnown,
+		outputKnown:           total.outputKnown && baseline.outputKnown,
+		cachedInputKnown:      total.cachedInputKnown && baseline.cachedInputKnown,
+		cacheWriteInputKnown:  total.cacheWriteInputKnown && baseline.cacheWriteInputKnown,
 	}
 }
 
 func normalizeCodexRawTokenUsage(usage codexRawTokenUsage) codexRawTokenUsage {
 	if usage.CachedInputTokens == 0 {
-		usage.CachedInputTokens = usage.CacheReadInputTokens
+		if !usage.cachedInputKnown && usage.cacheReadInputKnown {
+			usage.CachedInputTokens = usage.CacheReadInputTokens
+			usage.cachedInputKnown = true
+		}
 	}
 	usage.CacheReadInputTokens = 0
+	usage.cacheReadInputKnown = false
 	return usage
 }
 
@@ -3937,7 +4957,32 @@ func addCodexRawTokenUsage(a, b codexRawTokenUsage) codexRawTokenUsage {
 		InputTokens:           a.InputTokens + b.InputTokens,
 		OutputTokens:          a.OutputTokens + b.OutputTokens,
 		CachedInputTokens:     a.CachedInputTokens + b.CachedInputTokens,
+		CacheWriteInputTokens: a.CacheWriteInputTokens + b.CacheWriteInputTokens,
 		ReasoningOutputTokens: a.ReasoningOutputTokens + b.ReasoningOutputTokens,
+		inputKnown:            a.inputKnown && b.inputKnown,
+		outputKnown:           a.outputKnown && b.outputKnown,
+		cachedInputKnown:      a.cachedInputKnown && b.cachedInputKnown,
+		cacheWriteInputKnown:  a.cacheWriteInputKnown && b.cacheWriteInputKnown,
+	}
+}
+
+func codexRawUsageExecutionEvidence(usage codexRawTokenUsage) *ExecutionEvidence {
+	var uncached *int64
+	if usage.inputKnown && usage.cachedInputKnown && usage.CachedInputTokens <= usage.InputTokens {
+		value := usage.InputTokens - usage.CachedInputTokens
+		uncached = &value
+	}
+	return &ExecutionEvidence{
+		Usage: UsageEvidence{
+			InputUncachedTokens:   uncached,
+			InputCacheReadTokens:  codexEvidenceInt64(usage.CachedInputTokens, usage.cachedInputKnown),
+			InputCacheWriteTokens: codexEvidenceInt64(usage.CacheWriteInputTokens, usage.cacheWriteInputKnown),
+			OutputTokens:          codexEvidenceInt64(usage.OutputTokens, usage.outputKnown),
+			Complete:              uncached != nil && usage.cachedInputKnown && usage.cacheWriteInputKnown && usage.outputKnown,
+			Source:                EvidenceSourceProviderEvent,
+		},
+		ProviderModel: ProviderModelEvidence{Source: EvidenceSourceMissing},
+		ProviderCost:  ProviderCostEvidence{Authority: CostAuthorityMissing, Basis: CostBasisMissing, Source: EvidenceSourceMissing},
 	}
 }
 

@@ -148,6 +148,23 @@ The runtime brief lists repos available to this task. Treat that list as the
 authority for agent checkout unless the user explicitly asks to bind a new
 project resource.
 
+For ordinary issue tasks with one unambiguous authorized primary repository,
+the daemon prepares it at the provider's startup working directory before
+launch. Follow the turn's prepared-repository context and work there directly.
+Repeating `repo checkout` for that primary repository returns the existing
+checkout without fetching or resetting it. Changing its ref through that
+command is refused; use deliberate Git operations in the existing checkout when
+the task requires a revision change. Additional repositories keep the normal
+checkout behavior. Local-directory resources retain their execution mode;
+ambiguous multi-repository selections and specialized task types are not
+automatically assigned a primary repository.
+
+Same-session continuation preserves the primary checkout, including uncommitted
+changes. Changing or removing the selected primary repository or its pinned ref
+blocks that continuation without deleting prior work; start a fresh session or
+restore the prior selection. Sessions created before primary-repository
+preparation retain their legacy layout.
+
 Workspace repos and project resources are not the same thing:
 
 - workspace repo metadata can appear in workspace context;

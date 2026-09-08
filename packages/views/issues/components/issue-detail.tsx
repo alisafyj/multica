@@ -5,6 +5,8 @@ import {
   issueBehavesAsAny,
   issueStatusCategory,
   statusCategoryOfKey,
+  useAnswerPendingInput,
+  usePendingInputs,
 } from "@multica/core/issues";
 import { useStatusLabel } from "../utils/status-label";
 import { priorityLabel } from "../utils/priority-label";
@@ -61,7 +63,7 @@ import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar"
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
 import { PropertyIcon } from "../../common/property-icon";
-import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
+import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest, PendingInputAnswer } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
@@ -1479,6 +1481,18 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     submitComment, submitReply,
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
+  const pendingInputsQuery = usePendingInputs(wsId, id, !!issue);
+  const { mutateAsync: answerPendingInput } = useAnswerPendingInput(wsId, id);
+  const pendingInputByCommentId = useMemo(() => new Map(
+    (pendingInputsQuery.data ?? []).map((pendingInput) => [
+      pendingInput.question_comment_id,
+      pendingInput,
+    ]),
+  ), [pendingInputsQuery.data]);
+  const handleAnswerPendingInput = useCallback((
+    pendingInputId: string,
+    answers: Record<string, PendingInputAnswer>,
+  ) => answerPendingInput({ pendingInputId, answers }).then(() => undefined), [answerPendingInput]);
 
   // Resolve / unresolve must always clear the per-session expand entry so
   // re-resolving an already-expanded thread folds it back to the bar (the
@@ -2634,7 +2648,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           own token spend, with the issue total on the section header.
           Self-contained; owns its own collapse state and WS subscriptions.
           Hides itself when there are no runs to show. */}
-      <ExecutionLogSection issueId={id} identifier={issue.identifier} />
+      <ExecutionLogSection workspaceId={wsId} issueId={id} identifier={issue.identifier} />
 
       {/* Details — creator and timestamps. Sits below the execution log
           because it is the least-read block in the sidebar: the values
@@ -2736,6 +2750,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             expandedResolvedIds={expandedResolved}
             onResolvedExpandChange={toggleResolvedExpand}
             highlightedCommentId={highlightedId}
+            pendingInput={pendingInputByCommentId.get(item.entry.id)}
+            onAnswerPendingInput={handleAnswerPendingInput}
           />
         </div>
       );

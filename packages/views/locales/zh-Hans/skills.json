@@ -317,6 +317,7 @@
     "import_button": "导入到工作区",
     "importing": "导入中...",
     "skill_files_other": "{{count}} 个文件",
+    "skill_files_unavailable": "文件不可用",
     "skill_name_label": "工作区里的 skill 名称",
     "skill_description_label": "描述",
     "skill_description_placeholder": "可选——描述智能体什么时候应该使用这个 skill。",

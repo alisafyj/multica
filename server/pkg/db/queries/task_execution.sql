@@ -6,4 +6,3 @@ UPDATE agent_task_queue
 SET execution_metrics = sqlc.arg(execution_metrics)::jsonb
 WHERE id = sqlc.arg(task_id)
   AND execution_metrics IS NOT DISTINCT FROM sqlc.narg(previous_metrics)::jsonb;
-

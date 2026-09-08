@@ -146,7 +146,7 @@ const onlineRuntime: AgentRuntime = {
   launch_header: "",
   status: "online",
   device_info: "Mac",
-  metadata: {},
+  metadata: { capabilities: ["runtime-mcp-selection-v1"] },
   owner_id: "user-1",
   visibility: "private",
   last_seen_at: null,
@@ -193,7 +193,7 @@ describe("McpConfigTab", () => {
     expect(screen.getByText("STDIO")).toBeVisible();
     expect(screen.getByText("Streamable HTTP")).toBeVisible();
     expect(screen.getByRole("heading", { name: /managed by multica/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /inherited from runtime/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /runtime mcp/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/MCP config JSON editor/i)).not.toBeInTheDocument();
   });
 
@@ -746,6 +746,135 @@ describe("McpConfigTab", () => {
         "Couldn't discover runtime MCP servers. Try again.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("saves a name-only runtime MCP allowlist while preserving other config", async () => {
+    const user = userEvent.setup();
+    mockRuntimeCapabilities.mockResolvedValue({
+      skills: [],
+      supported: true,
+      mcpServers: [
+        {
+          name: "linear",
+          transport: "http",
+          enabled: true,
+          source: "runtime",
+          entry: { headers: { Authorization: "secret" } },
+        },
+        { name: "docs", transport: "stdio", enabled: true, source: "runtime" },
+      ],
+      mcpSupported: true,
+    });
+    const { onSave } = renderTab(
+      {
+        mcp_config: {
+          version: 1,
+          _multica: { future: true, runtimeMcp: { mode: "inherit" } },
+        },
+      },
+      undefined,
+      onlineRuntime,
+    );
+
+    const policySelect = await screen.findByRole("combobox", {
+      name: /runtime mcp policy/i,
+    });
+    await waitFor(() => expect(policySelect).toBeEnabled());
+    await user.click(policySelect);
+    await user.click(await screen.findByRole("option", { name: "Selected" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith({
+        mcp_config: {
+          version: 1,
+          _multica: {
+            future: true,
+            runtimeMcp: { mode: "allowlist", allow: [] },
+          },
+        },
+      }),
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: /linear/i }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith({
+        mcp_config: {
+          version: 1,
+          _multica: {
+            future: true,
+            runtimeMcp: { mode: "allowlist", allow: ["linear"] },
+          },
+        },
+      }),
+    );
+    expect(JSON.stringify(onSave.mock.calls)).not.toContain("Authorization");
+    expect(JSON.stringify(onSave.mock.calls)).not.toContain("secret");
+  });
+
+  it("shows saved selected names without enabling edits on an old daemon", async () => {
+    mockRuntimeCapabilities.mockResolvedValue({
+      skills: [],
+      supported: true,
+      mcpServers: [{ name: "linear", transport: "http", enabled: true }],
+      mcpSupported: true,
+    });
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderTab(
+      {
+        mcp_config: {
+          _multica: {
+            runtimeMcp: { mode: "allowlist", allow: ["saved-only"] },
+          },
+        },
+      },
+      onSave,
+      { ...onlineRuntime, metadata: {} },
+    );
+
+    expect(await screen.findByText("saved-only")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /runtime mcp policy/i })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /saved-only/i })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("does not offer runtime policy editing when inventory discovery fails", async () => {
+    mockRuntimeCapabilities.mockRejectedValue(new Error("offline during discovery"));
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    renderTab(
+      {
+        mcp_config: {
+          _multica: {
+            runtimeMcp: { mode: "allowlist", allow: ["saved-linear"] },
+          },
+        },
+      },
+      onSave,
+      onlineRuntime,
+    );
+
+    expect(await screen.findByText("saved-linear")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /runtime mcp policy/i })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /saved-linear/i })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("limits runtime MCP selection to Claude and Codex", async () => {
+    mockRuntimeCapabilities.mockResolvedValue({
+      skills: [],
+      supported: true,
+      mcpServers: [{ name: "linear", transport: "http", enabled: true }],
+      mcpSupported: true,
+    });
+    renderTab({}, undefined, { ...onlineRuntime, provider: "opencode" });
+
+    expect(
+      await screen.findByRole("combobox", { name: /runtime mcp policy/i }),
+    ).toBeDisabled();
   });
 });
 

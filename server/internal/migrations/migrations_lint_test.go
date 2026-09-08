@@ -192,6 +192,15 @@ var mergedDuplicateMigrationStems = map[string][]string{
 	"315": {"315_pmo_sync_link_identity_index", "315_workspace_mcp_server"},
 	"316": {"316_project_created_by", "316_workspace_mcp_server_name_unique"},
 	"317": {"317_agent_mcp_server_server_index", "317_product_map"},
+	"911": {"911_task_run_evidence", "911_test_run_case_agent_task"},
+	"912": {"912_task_run_evidence_task_attempt_index", "912_test_run_case_agent_task_index"},
+	"913": {"913_agent_task_execution_metrics", "913_task_pending_input"},
+	"914": {"914_prd_draft", "914_task_pending_input_id_index"},
+	"915": {"915_prd_draft_topic_index", "915_task_pending_input_request_index"},
+	"916": {"916_task_pending_input_issue_index", "916_test_run_parallelism"},
+	"917": {"917_agent_runtime_test_host", "917_task_run_evidence_claim_generation"},
+	"918": {"918_autopilot_test_run", "918_task_run_evidence_claim_generation_index"},
+	"919": {"919_autopilot_run_test_run_index", "919_drop_task_run_evidence_task_attempt_index"},
 }
 
 // legacyFKMigrations records already-applied migrations that create database
@@ -384,6 +393,57 @@ func TestMigrationNumericPrefixesStayUniqueAfterLegacySet(t *testing.T) {
 
 		if len(stems) > 1 {
 			t.Errorf("migration prefix %s is reused by %v; use the next unique prefix instead", prefix, stems)
+		}
+	}
+}
+
+func TestPR94MergedMigrationDependenciesKeepOrder(t *testing.T) {
+	files := migrationFilesForLint(t, "*.up.sql")
+	positions := make(map[string]int, len(files))
+	for i, file := range files {
+		positions[strings.TrimSuffix(filepath.Base(file), ".up.sql")] = i
+	}
+
+	chains := [][]string{
+		{
+			"911_task_run_evidence",
+			"912_task_run_evidence_task_attempt_index",
+			"913_task_pending_input",
+			"914_task_pending_input_id_index",
+			"915_task_pending_input_request_index",
+			"916_task_pending_input_issue_index",
+			"917_task_run_evidence_claim_generation",
+			"918_task_run_evidence_claim_generation_index",
+			"919_drop_task_run_evidence_task_attempt_index",
+			"920_task_pending_input_issue_revisions",
+			"921_agent_task_queue_queue_started_at",
+			"922_task_run_evidence_model_usage",
+		},
+		{
+			"911_test_run_case_agent_task",
+			"912_test_run_case_agent_task_index",
+			"913_agent_task_execution_metrics",
+			"914_prd_draft",
+			"915_prd_draft_topic_index",
+			"916_test_run_parallelism",
+			"917_agent_runtime_test_host",
+			"918_autopilot_test_run",
+			"919_autopilot_run_test_run_index",
+		},
+	}
+
+	for _, chain := range chains {
+		previous := -1
+		for _, stem := range chain {
+			position, ok := positions[stem]
+			if !ok {
+				t.Errorf("required PR94 migration %s is missing", stem)
+				continue
+			}
+			if position <= previous {
+				t.Errorf("PR94 migration %s is out of dependency order in %v", stem, chain)
+			}
+			previous = position
 		}
 	}
 }

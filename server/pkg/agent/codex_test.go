@@ -614,7 +614,7 @@ func TestCodexRawTurnCompletedSubtractsCachedInput(t *testing.T) {
 	c.notificationProtocol = "raw"
 	c.onTurnDone = func(aborted bool) {}
 
-	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-usage","status":"completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50}}}}`)
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-usage","status":"completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050}}}}`)
 
 	c.usageMu.Lock()
 	defer c.usageMu.Unlock()
@@ -972,8 +972,27 @@ func TestParseCodexSessionFileSubtractsCachedInput(t *testing.T) {
 	if got.usage.CacheReadTokens != 300 {
 		t.Fatalf("cache read tokens = %d, want 300", got.usage.CacheReadTokens)
 	}
-	if got.usage.OutputTokens != 50 {
-		t.Fatalf("output tokens = %d, want 50", got.usage.OutputTokens)
+	if got.usage.OutputTokens != 40 {
+		t.Fatalf("output tokens = %d, want 40", got.usage.OutputTokens)
+	}
+}
+
+func TestParseCodexSessionFileDoesNotDoubleCountReasoningOutput(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	content := `{"timestamp":"2026-09-05T17:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":463024,"cached_input_tokens":425600,"output_tokens":2465,"reasoning_output_tokens":522,"total_tokens":465489},"model":"gpt-5.6-sol"}}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	got := parseCodexSessionFile(path)
+	if got == nil {
+		t.Fatal("expected usage")
+	}
+	want := TokenUsage{InputTokens: 37424, OutputTokens: 2465, CacheReadTokens: 425600}
+	if got.usage != want {
+		t.Fatalf("usage = %+v, want Codex total-token buckets %+v", got.usage, want)
 	}
 }
 
@@ -1059,7 +1078,7 @@ func TestScanCodexSessionUsageSubtractsResumeBaseline(t *testing.T) {
 	}
 	// total_token_usage is cumulative for the resumed Codex session. This task
 	// should report only the delta after startTime, not the whole session total.
-	want := TokenUsage{InputTokens: 100, OutputTokens: 65, CacheReadTokens: 700}
+	want := TokenUsage{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 700}
 	if got.usage != want {
 		t.Fatalf("usage = %+v, want resumed-task delta %+v", got.usage, want)
 	}
@@ -1076,9 +1095,9 @@ func TestParseCodexSessionFileSinceResumeEdgeCases(t *testing.T) {
 		{
 			name: "final last usage wins over earlier total",
 			lines: []string{
-				`{"timestamp":"2026-07-13T00:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10}}}}`,
-				`{"timestamp":"2026-07-13T00:00:11Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"output_tokens":20}}}}`,
-				`{"timestamp":"2026-07-13T00:00:12Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"output_tokens":3}}}}`,
+				`{"timestamp":"2026-07-13T00:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10,"reasoning_output_tokens":4}}}}`,
+				`{"timestamp":"2026-07-13T00:00:11Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"output_tokens":20,"reasoning_output_tokens":7}}}}`,
+				`{"timestamp":"2026-07-13T00:00:12Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"output_tokens":3,"reasoning_output_tokens":2}}}}`,
 			},
 			want: TokenUsage{InputTokens: 7, OutputTokens: 3},
 		},
@@ -1090,6 +1109,15 @@ func TestParseCodexSessionFileSinceResumeEdgeCases(t *testing.T) {
 				`{"timestamp":"2026-07-13T00:00:12Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"output_tokens":20}}}}`,
 			},
 			want: TokenUsage{InputTokens: 60, OutputTokens: 10},
+		},
+		{
+			name: "multiple cumulative totals do not add reasoning detail",
+			lines: []string{
+				`{"timestamp":"2026-07-13T00:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":50,"reasoning_output_tokens":10}}}}`,
+				`{"timestamp":"2026-07-13T00:00:11Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":130,"output_tokens":60,"reasoning_output_tokens":15}}}}`,
+				`{"timestamp":"2026-07-13T00:00:12Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"output_tokens":70,"reasoning_output_tokens":20}}}}`,
+			},
+			want: TokenUsage{InputTokens: 60, OutputTokens: 20},
 		},
 		{
 			name: "cache alias changes from cache read to cached input",
@@ -2902,6 +2930,120 @@ func TestCodexThreadStartTimeoutDoesNotPersistSensitiveInputs(t *testing.T) {
 		if strings.Contains(combined, secret) {
 			t.Fatalf("sensitive input persisted in timeout diagnostics")
 		}
+	}
+}
+
+func TestCodexRequestUserInputIsAsyncAndAcksAfterNativeWrite(t *testing.T) {
+	t.Parallel()
+
+	var written bytes.Buffer
+	release := make(chan struct{})
+	acked := make(chan bool, 1)
+	waitStates := make(chan bool, 2)
+	statuses := make(chan string, 2)
+	callbackStarted := make(chan PendingInputRequest, 1)
+	c := &codexClient{
+		cfg:         Config{Logger: slog.Default()},
+		stdin:       &written,
+		pending:     make(map[int]*pendingRPC),
+		processDone: make(chan struct{}),
+		requestUserInput: func(_ context.Context, req PendingInputRequest) (PendingInputAnswer, error) {
+			callbackStarted <- req
+			<-release
+			return PendingInputAnswer{
+				Answers: map[string][]string{"q1": {"A"}},
+				OnDelivered: func(context.Context) error {
+					acked <- written.Len() > 0
+					return nil
+				},
+			}, nil
+		},
+		requestContext:    context.Background(),
+		onUserInputWait:   func(waiting bool) { waitStates <- waiting },
+		onUserInputStatus: func(status string) { statuses <- status },
+	}
+
+	returned := make(chan struct{})
+	go func() {
+		c.handleLine(`{"jsonrpc":"2.0","id":"server-request-1","method":"item/tool/requestUserInput","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","header":"Choice","question":"Choose?","options":[{"label":"A","description":"First"}]}]}}`)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("stdout dispatch blocked on human input")
+	}
+	req := <-callbackStarted
+	if req.RequestKey == "" || len(req.Questions) != 1 {
+		t.Fatalf("unexpected normalized request: %+v", req)
+	}
+	c.handleLine(`{"jsonrpc":"2.0","id":"server-request-1","method":"item/tool/requestUserInput","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","header":"Choice","question":"Choose?","options":[{"label":"A","description":"First"}]}]}}`)
+	select {
+	case duplicate := <-callbackStarted:
+		t.Fatalf("duplicate replay reached callback: %+v", duplicate)
+	default:
+	}
+	close(release)
+	select {
+	case wroteFirst := <-acked:
+		if !wroteFirst {
+			t.Fatal("delivery acknowledged before native write")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("native response was not written and acknowledged")
+	}
+	for _, want := range []bool{true, false} {
+		if got := <-waitStates; got != want {
+			t.Fatalf("wait state = %t, want %t", got, want)
+		}
+	}
+	for _, want := range []string{"waiting_for_input", "running"} {
+		if got := <-statuses; got != want {
+			t.Fatalf("status = %q, want %q", got, want)
+		}
+	}
+
+	var response struct {
+		ID     string `json:"id"`
+		Result struct {
+			Answers map[string]struct {
+				Answers []string `json:"answers"`
+			} `json:"answers"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "server-request-1" || len(response.Result.Answers["q1"].Answers) != 1 {
+		t.Fatalf("unexpected native response: %+v", response)
+	}
+	if got := strings.Count(written.String(), "\n"); got != 1 {
+		t.Fatalf("native response writes = %d, want 1", got)
+	}
+}
+
+func TestCodexRequestUserInputRejectsSecretBeforeCallback(t *testing.T) {
+	t.Parallel()
+
+	var written bytes.Buffer
+	called := false
+	c := &codexClient{
+		cfg:     Config{Logger: slog.Default()},
+		stdin:   &written,
+		pending: make(map[int]*pendingRPC),
+		requestUserInput: func(context.Context, PendingInputRequest) (PendingInputAnswer, error) {
+			called = true
+			return PendingInputAnswer{}, nil
+		},
+		requestContext: context.Background(),
+	}
+	c.handleLine(`{"jsonrpc":"2.0","id":7,"method":"item/tool/requestUserInput","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","isBlocking":true,"questions":[{"id":"q1","header":"Secret","question":"Token?","isSecret":true}]}}`)
+	time.Sleep(20 * time.Millisecond)
+	if called {
+		t.Fatal("secret request reached callback")
+	}
+	if !strings.Contains(written.String(), `"code":-32602`) {
+		t.Fatalf("secret request did not receive invalid-params response: %s", written.String())
 	}
 }
 

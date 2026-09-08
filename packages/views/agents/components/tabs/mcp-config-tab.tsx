@@ -37,12 +37,20 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import {
@@ -52,11 +60,14 @@ import {
 } from "../../../common/mcp-server-row";
 import { useT } from "../../../i18n";
 import {
+  getRuntimeMcpPolicy,
   listManagedMcpServers,
   mcpTransportLabel,
   removeManagedMcpServer,
+  setRuntimeMcpPolicy,
   upsertManagedMcpServer,
   type ManagedMcpServer,
+  type RuntimeMcpPolicy,
 } from "./mcp-config-model";
 import { McpServerDialog } from "./mcp-server-dialog";
 
@@ -90,6 +101,13 @@ export function McpConfigTab({
       ? runtime.id
       : null;
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
+  const savedRuntimePolicy = useMemo(
+    () => getRuntimeMcpPolicy(agent.mcp_config),
+    [agent.mcp_config],
+  );
+  const [runtimePolicy, setRuntimePolicy] =
+    useState<RuntimeMcpPolicy>(savedRuntimePolicy);
+  const [savingRuntimePolicy, setSavingRuntimePolicy] = useState(false);
   // The workspace MCP servers ASSIGNED to this agent, plus the library to pick
   // from (GH #6062). A library entry does nothing until it is added here, and
   // each assignment carries its own toggle. The API returns names and
@@ -146,6 +164,71 @@ export function McpConfigTab({
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => onDirtyChange?.(false), [onDirtyChange]);
+  useEffect(() => setRuntimePolicy(savedRuntimePolicy), [savedRuntimePolicy]);
+
+  const runtimeSelectionSupported = useMemo(() => {
+    if (!runtime || !["claude", "codex"].includes(runtime.provider)) return false;
+    const capabilities = runtime.metadata?.capabilities;
+    return (
+      Array.isArray(capabilities) &&
+      capabilities.includes("runtime-mcp-selection-v1")
+    );
+  }, [runtime]);
+  const canEditRuntimePolicy =
+    canEdit &&
+    !redacted &&
+    canReadRuntime &&
+    runtime?.status === "online" &&
+    runtimeSelectionSupported &&
+    runtimeQuery.isSuccess &&
+    runtimeQuery.data.mcpSupported === true;
+  const runtimeInventoryNames = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...(runtimePolicy.mode === "allowlist" ? runtimePolicy.allow : []),
+          ...(runtimeQuery.data?.mcpServers.map((server) => server.name) ?? []),
+        ]),
+      ),
+    [runtimePolicy, runtimeQuery.data],
+  );
+
+  const saveRuntimePolicy = async (next: RuntimeMcpPolicy) => {
+    if (!canEditRuntimePolicy || savingRuntimePolicy) return;
+    const previous = runtimePolicy;
+    setRuntimePolicy(next);
+    setSavingRuntimePolicy(true);
+    try {
+      await onSave({
+        mcp_config: setRuntimeMcpPolicy(agent.mcp_config, next),
+      });
+    } catch (error) {
+      setRuntimePolicy(previous);
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : t(($) => $.tab_body.mcp_config.save_failed_toast),
+      );
+    } finally {
+      setSavingRuntimePolicy(false);
+    }
+  };
+
+  const handleRuntimePolicyMode = (mode: string | null) => {
+    if (mode === "inherit" || mode === "deny_all") {
+      void saveRuntimePolicy({ mode, allow: [] });
+    } else if (mode === "allowlist") {
+      void saveRuntimePolicy({ mode, allow: [] });
+    }
+  };
+
+  const handleRuntimeServerToggle = (name: string, checked: boolean) => {
+    if (runtimePolicy.mode !== "allowlist") return;
+    const next = new Set(runtimePolicy.allow);
+    if (checked) next.add(name);
+    else next.delete(name);
+    void saveRuntimePolicy({ mode: "allowlist", allow: Array.from(next) });
+  };
 
   const startRename = (server: ManagedMcpServer) => {
     if (renamePending) return;
@@ -473,6 +556,98 @@ export function McpConfigTab({
               {t(($) => $.tab_body.mcp_config.refresh_action)}
             </Button>
           )}
+        </div>
+        <div className="space-y-3 rounded-lg border bg-surface-raised/40 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label
+              htmlFor="runtime-mcp-policy"
+              className="text-caption font-medium"
+            >
+              {t(($) => $.tab_body.mcp_config.runtime_policy_label)}
+            </label>
+            <Select
+              items={[
+                {
+                  value: "inherit",
+                  label: t(($) => $.tab_body.mcp_config.runtime_policy_inherit),
+                },
+                {
+                  value: "deny_all",
+                  label: t(($) => $.tab_body.mcp_config.runtime_policy_none),
+                },
+                {
+                  value: "allowlist",
+                  label: t(($) => $.tab_body.mcp_config.runtime_policy_selected),
+                },
+              ]}
+              value={runtimePolicy.mode}
+              disabled={!canEditRuntimePolicy || savingRuntimePolicy}
+              onValueChange={handleRuntimePolicyMode}
+            >
+              <SelectTrigger id="runtime-mcp-policy" size="sm" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="inherit">
+                  {t(($) => $.tab_body.mcp_config.runtime_policy_inherit)}
+                </SelectItem>
+                <SelectItem value="deny_all">
+                  {t(($) => $.tab_body.mcp_config.runtime_policy_none)}
+                </SelectItem>
+                <SelectItem value="allowlist">
+                  {t(($) => $.tab_body.mcp_config.runtime_policy_selected)}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {!canEditRuntimePolicy && (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.tab_body.mcp_config.runtime_policy_unavailable)}
+            </p>
+          )}
+          {runtimePolicy.mode === "allowlist" &&
+            (runtimeInventoryNames.length > 0 ? (
+              <ul className="divide-y rounded-md border bg-background">
+                {runtimeInventoryNames.map((name) => {
+                  const checked = runtimePolicy.allow.includes(name);
+                  const discovered =
+                    runtimeQuery.data?.mcpServers.some(
+                      (server) => server.name === name,
+                    ) === true;
+                  return (
+                    <li key={name} className="flex items-center gap-3 px-3 py-2">
+                      <Server
+                        className="h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-body font-medium">
+                        {name}
+                      </span>
+                      {!discovered && (
+                        <Badge variant="outline">
+                          {t(($) => $.tab_body.mcp_config.runtime_policy_saved_badge)}
+                        </Badge>
+                      )}
+                      <Checkbox
+                        checked={checked}
+                        disabled={!canEditRuntimePolicy || savingRuntimePolicy}
+                        onCheckedChange={(value) =>
+                          handleRuntimeServerToggle(name, value === true)
+                        }
+                        aria-label={t(
+                          ($) => $.tab_body.mcp_config.runtime_policy_toggle_aria,
+                          { name },
+                        )}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.tab_body.mcp_config.runtime_policy_selected_empty)}
+              </p>
+            ))}
         </div>
         {!runtime ? (
           <McpNotice text={t(($) => $.tab_body.mcp_config.runtime_missing)} />

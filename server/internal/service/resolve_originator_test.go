@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -19,16 +18,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
-// newResolveOriginatorPool mirrors the local-postgres pattern used in
-// task_claim_race_test.go: skip when the test database is unreachable
-// instead of failing, so `go test ./...` stays usable in CI / clean
-// developer setups that don't run Postgres.
+// newResolveOriginatorPool uses only an explicitly configured test database.
 func newResolveOriginatorPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
+	dbURL := testDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, dbURL)

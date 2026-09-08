@@ -82,7 +82,7 @@ function sourceReason(agent: CommentTriggerPreviewAgent, t: IssuesT): string | n
 function useTriggerPresenceLine(agentId: string, t: IssuesT): string | null {
   const ws = useCurrentWorkspace();
   const detail = useAgentPresenceDetail(ws?.id, agentId);
-  if (detail === "loading") return null;
+  if (detail === "loading" || detail.availability === "unknown") return null;
   return detail.availability === "online" || detail.availability === "unstable"
     ? t(($) => $.comment.trigger_starts_now)
     : t(($) => $.comment.trigger_starts_when_online);

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,9 @@ type claudeBackend struct {
 }
 
 func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
+	if err := validateProjectConfigurationPolicy(opts.ProjectConfigurationPolicy); err != nil {
+		return nil, err
+	}
 	execPath := b.cfg.ExecutablePath
 	if execPath == "" {
 		execPath = "claude"
@@ -75,7 +79,13 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 	}()
 
-	cmd := b.cfg.commandAt(execPath).exec(runCtx, args...)
+	runtimeCmd := b.cfg.commandAt(execPath)
+	if opts.ProjectConfigurationPolicy != "" || opts.ClaudeSettingsPath != "" {
+		runtimeCmd = runtimeCmd.withFilteredPrefix(func(prefix []string) []string {
+			return filterCustomArgs(prefix, claudeManagedSettingsArgs(opts), b.cfg.Logger)
+		})
+	}
+	cmd := runtimeCmd.exec(runCtx, args...)
 	hideAgentWindow(cmd)
 	// Take over context cancellation: the default kills the whole group the
 	// instant runCtx is done. We instead drive a graceful group-wide
@@ -93,6 +103,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		cancel()
 		return nil, err
 	}
+	launchConfiguration := projectClaudeLaunchConfiguration(cmd.Args, cmd.Env, cmd.Dir, prompt)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -119,14 +130,24 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		cancel()
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
+	launchStarted := time.Now()
 
-	b.cfg.Logger.Info("claude started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
+	b.cfg.Logger.Info("claude started",
+		"pid", cmd.Process.Pid,
+		"cwd", opts.Cwd,
+		"model", opts.Model,
+		"task_id", b.cfg.TaskID,
+		"runtime_id", b.cfg.RuntimeID,
+		"attempt", 1,
+	)
+	logClaudeLaunchConfiguration(b.cfg.Logger, b.cfg, cmd.Process.Pid, opts.Cwd, launchConfiguration)
 
 	// The process started — transfer temp file ownership to the goroutine.
 	mcpFileCleanup = nil
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
+	pendingInputs := newPendingInputCoordinator()
 
 	// procDone closes once cmd.Wait() returns, letting the cancellation handler
 	// skip a process that already exited and avoid signalling a dead/reused pid.
@@ -146,9 +167,10 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	// control_response frames on the same input stream; closing stdin here
 	// leaves the child stuck waiting for a response until its own fallback
 	// timeout.
+	inputWriter := &lockedWriter{writer: stdin}
 	writeDone := make(chan error, 1)
 	go func() {
-		err := writeClaudeInput(stdin, prompt)
+		err := writeClaudeInput(inputWriter, prompt)
 		if err != nil {
 			closeStdin()
 		}
@@ -157,8 +179,8 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	go func() {
 		defer cancel()
-		defer close(msgCh)
 		defer close(resCh)
+		defer close(msgCh)
 		if mcpConfigPath != "" {
 			defer cleanupMcpConfigTemp(mcpConfigPath)
 		}
@@ -168,15 +190,19 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		var finalResultText string
 		sawResult := false
 		resultIsError := false
+		executionBudgetExceeded := false
 		terminalReasonError := ""
 		var sessionID string
 		sawAsyncLaunch := false
 		usage := make(map[string]TokenUsage)
+		var executionEvidence *ExecutionEvidence
+		hasExecutionEvidenceAttempt := false
 		eventCount := 0
 		invalidEventCount := 0
 		assistantEventCount := 0
 		toolUseCount := 0
 		unreadableAssistantCount := 0
+		streamMetadata := newClaudeStreamMetadataCollector()
 
 		// On cancellation / timeout, terminate claude (and every MCP server and
 		// tool subprocess it spawned) BEFORE unblocking the scanner. EOF stdin
@@ -217,6 +243,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			if line == "" {
 				continue
 			}
+			streamMetadata.Observe([]byte(line))
 
 			var msg claudeSDKMessage
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
@@ -229,6 +256,8 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			case "assistant":
 				assistantEventCount++
 				turn := b.handleAssistant(msg, msgCh, usage)
+				executionEvidence = appendExecutionEvidenceAttempt(executionEvidence, claudeAssistantExecutionEvidence(msg), hasExecutionEvidenceAttempt)
+				hasExecutionEvidenceAttempt = true
 				toolUseCount += turn.toolUses
 				if !turn.understood {
 					unreadableAssistantCount++
@@ -245,12 +274,16 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				sawResult = true
-				finalResultText = msg.ResultText
+				finalResultText = claudeTerminalResultText(msg)
 				resultIsError = msg.IsError
+				executionBudgetExceeded = msg.IsError && msg.Subtype == "error_max_budget_usd"
 				terminalReasonError = claudeTerminalReasonFailure(msg.TerminalReason, msg.ResultText)
 				sessionID = msg.SessionID
 				if resultUsage := claudeResultUsage(msg, opts.Model); len(resultUsage) > 0 {
 					usage = resultUsage
+				}
+				if resultEvidence := claudeResultExecutionEvidence(msg); resultEvidence != nil {
+					executionEvidence = resultEvidence
 				}
 				closeStdin()
 			case "log":
@@ -262,11 +295,14 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					})
 				}
 			case "control_request":
-				b.handleControlRequest(msg, stdin)
+				if !b.handleUserInputControlRequest(runCtx, msg, inputWriter, opts, msgCh, pendingInputs) {
+					b.handleControlRequest(msg, inputWriter)
+				}
 			}
 		}
 		scanErr := scanner.Err()
 		if scanErr != nil {
+			streamMetadata.addError("MALFORMED_EVENT")
 			// Scanner stopped consuming stdout. Close the pipe before Wait so a
 			// child still writing a malformed/oversized event cannot deadlock on
 			// the full OS pipe; the scanner error remains the primary failure.
@@ -278,6 +314,18 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		// Wait for process exit, then release the cancellation handler.
 		exitErr := cmd.Wait()
 		close(procDone)
+		groupGone := waitProcessGroupGone(cmd, 0)
+		launchEnded := time.Now()
+		logClaudeExecutionSpan(
+			b.cfg.Logger,
+			b.cfg,
+			cmd.Process.Pid,
+			opts.Cwd,
+			launchStarted,
+			launchEnded,
+			cmd.ProcessState != nil && groupGone,
+		)
+		logClaudeStreamMetadata(b.cfg.Logger, b.cfg, cmd.Process.Pid, opts.Cwd, streamMetadata.Finish())
 		// The leader is reaped; drop ownership. On Windows that closes the Job
 		// Object, which kills anything still inside it — precisely what should
 		// happen to a descendant that outlived the CLI (GH #7522).
@@ -350,15 +398,26 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			)
 		}
 
-		resCh <- Result{
-			Status:         finalStatus,
-			Output:         finalOutput,
-			Error:          finalError,
-			DurationMs:     duration.Milliseconds(),
-			SessionID:      reportedSessionID,
-			Usage:          usage,
-			ResumeRejected: resumeRejected,
+		result := Result{
+			Status:                  finalStatus,
+			Output:                  finalOutput,
+			Error:                   finalError,
+			DurationMs:              duration.Milliseconds(),
+			SessionID:               reportedSessionID,
+			Usage:                   usage,
+			ExecutionEvidence:       executionEvidence,
+			ResumeRejected:          resumeRejected,
+			ExecutionBudgetExceeded: finalStatus == "failed" && executionBudgetExceeded,
 		}
+		// A terminal provider event ends the wait for unanswered questions, but
+		// the result must not become visible until every accepted question has
+		// either failed or completed its native-write delivery acknowledgement.
+		cancel()
+		if err := pendingInputs.wait(); err != nil && result.Status == "completed" {
+			result.Status = "failed"
+			result.Error = err.Error()
+		}
+		resCh <- result
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
@@ -378,10 +437,10 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 	// Accumulate token usage per model.
 	if content.Usage != nil && content.Model != "" {
 		u := usage[content.Model]
-		u.InputTokens += content.Usage.InputTokens
-		u.OutputTokens += content.Usage.OutputTokens
-		u.CacheReadTokens += content.Usage.CacheReadInputTokens
-		u.CacheWriteTokens += content.Usage.CacheCreationInputTokens
+		u.InputTokens += evidenceInt64Value(content.Usage.InputTokens)
+		u.OutputTokens += evidenceInt64Value(content.Usage.OutputTokens)
+		u.CacheReadTokens += evidenceInt64Value(content.Usage.CacheReadInputTokens)
+		u.CacheWriteTokens += evidenceInt64Value(content.Usage.CacheCreationInputTokens)
 		usage[content.Model] = u
 	}
 
@@ -480,9 +539,12 @@ func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interfa
 	if !denied && b.cfg.WorkDir != "" {
 		denied, rule = agentguard.DeniedFileRequest(req.Input, b.cfg.WorkDir)
 	}
-	behavior := "allow"
+	permission := map[string]any{"behavior": "allow", "updatedInput": inputMap}
 	if denied {
-		behavior = "deny"
+		permission = map[string]any{
+			"behavior": "deny",
+			"message":  "Multica denied this tool request under the task privacy or workspace policy.",
+		}
 		b.cfg.Logger.Warn("claude: privacy gate denied tool use",
 			"request_id", msg.RequestID,
 			"tool", req.ToolName,
@@ -495,10 +557,7 @@ func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interfa
 		"response": map[string]any{
 			"subtype":    "success",
 			"request_id": msg.RequestID,
-			"response": map[string]any{
-				"behavior":     behavior,
-				"updatedInput": inputMap,
-			},
+			"response":   permission,
 		},
 	}
 
@@ -510,6 +569,202 @@ func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interfa
 	data = append(data, '\n')
 	if _, err := stdin.Write(data); err != nil {
 		b.cfg.Logger.Warn("claude: failed to write control response", "error", err)
+	}
+}
+
+type claudeUserInputRequest struct {
+	Subtype                 string                 `json:"subtype"`
+	DialogKind              string                 `json:"dialog_kind"`
+	ToolName                string                 `json:"tool_name"`
+	ToolUseID               string                 `json:"tool_use_id"`
+	RequiresUserInteraction *bool                  `json:"requires_user_interaction,omitempty"`
+	Blocking                *bool                  `json:"blocking,omitempty"`
+	IsSecret                *bool                  `json:"isSecret,omitempty"`
+	Input                   json.RawMessage        `json:"input,omitempty"`
+	Payload                 claudeUserInputPayload `json:"payload"`
+}
+
+type claudeUserInputPayload struct {
+	Questions []claudeUserInputQuestion `json:"questions"`
+	Blocking  *bool                     `json:"blocking,omitempty"`
+	IsSecret  *bool                     `json:"isSecret,omitempty"`
+}
+
+type claudeUserInputQuestion struct {
+	Header      string               `json:"header"`
+	Question    string               `json:"question"`
+	Options     []PendingInputOption `json:"options"`
+	MultiSelect bool                 `json:"multiSelect"`
+	IsSecret    *bool                `json:"isSecret,omitempty"`
+}
+
+const claudeAskUserQuestionDialogKind = "permission_ask_user_question"
+
+func (b *claudeBackend) handleUserInputControlRequest(ctx context.Context, msg claudeSDKMessage, stdin interface{ Write([]byte) (int, error) }, opts ExecOptions, ch chan<- Message, coordinators ...*pendingInputCoordinator) bool {
+	// Classify before decoding optional payload fields: malformed interactive
+	// requests must never fall through to generic tool permission approval.
+	var envelope struct {
+		Subtype  string `json:"subtype"`
+		ToolName string `json:"tool_name"`
+	}
+	if err := json.Unmarshal(msg.Request, &envelope); err != nil {
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "control request is invalid or unsupported")
+		return true
+	}
+	if envelope.Subtype != "request_user_dialog" && !(envelope.Subtype == "can_use_tool" && envelope.ToolName == "AskUserQuestion") {
+		return false
+	}
+	var native claudeUserInputRequest
+	if err := json.Unmarshal(msg.Request, &native); err != nil {
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "user input request is invalid or unsupported")
+		return true
+	}
+
+	payload := native.Payload
+	var updatedInput map[string]any
+	permissionResponse := false
+	switch {
+	case native.Subtype == "request_user_dialog":
+		if native.DialogKind != claudeAskUserQuestionDialogKind {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "user input dialog kind is unsupported")
+			return true
+		}
+	case native.Subtype == "can_use_tool" && native.ToolName == "AskUserQuestion":
+		permissionResponse = true
+		if msg.RequestID == "" || native.ToolUseID == "" || !explicitlyTrue(native.RequiresUserInteraction) {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "user input request is invalid or unsupported")
+			return true
+		}
+		if err := json.Unmarshal(native.Input, &payload); err != nil {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "user input request is invalid or unsupported")
+			return true
+		}
+		if err := json.Unmarshal(native.Input, &updatedInput); err != nil || updatedInput == nil {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "user input request is invalid or unsupported")
+			return true
+		}
+	default:
+		return false
+	}
+	if opts.RequestUserInput == nil {
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "user input callback is unavailable")
+		return true
+	}
+	if !permissionResponse && (explicitlyFalse(native.Blocking) || explicitlyFalse(payload.Blocking)) {
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "nonblocking user input is not supported")
+		return true
+	}
+	if explicitlyTrue(native.IsSecret) || explicitlyTrue(payload.IsSecret) {
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "secret input is not supported")
+		return true
+	}
+	coordinator := newPendingInputCoordinator()
+	if len(coordinators) > 0 && coordinators[0] != nil {
+		coordinator = coordinators[0]
+	}
+
+	questions := make([]PendingInputQuestion, 0, len(payload.Questions))
+	questionTextByID := make(map[string]string, len(payload.Questions))
+	seenQuestionText := make(map[string]struct{}, len(payload.Questions))
+	for index, question := range payload.Questions {
+		if explicitlyTrue(question.IsSecret) {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "secret input is not supported")
+			return true
+		}
+		if _, duplicate := seenQuestionText[question.Question]; duplicate {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "duplicate question text is not supported")
+			return true
+		}
+		seenQuestionText[question.Question] = struct{}{}
+		id := fmt.Sprintf("q%d", index+1)
+		questions = append(questions, PendingInputQuestion{
+			ID: id, Header: question.Header, Question: question.Question,
+			Options: append([]PendingInputOption{}, question.Options...), AllowOther: true, MultiSelect: question.MultiSelect,
+		})
+		questionTextByID[id] = question.Question
+	}
+	request := PendingInputRequest{
+		Version:    PendingInputVersion1,
+		RequestKey: NewPendingInputRequestKey("claude", msg.SessionID, msg.RequestID, native.ToolUseID),
+		Blocking:   true, Questions: questions,
+	}
+	if err := ValidatePendingInputRequest(request); err != nil {
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "user input request is invalid or unsupported")
+		return true
+	}
+	switch coordinator.begin(msg.RequestID, request.RequestKey, pendingInputPayloadHash(request)) {
+	case pendingInputDuplicate:
+		return true
+	case pendingInputConflict:
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "request id was reused for different user input")
+		return true
+	case pendingInputLimitReached:
+		b.writeClaudeUserInputError(stdin, msg.RequestID, "too many user input requests in this execution")
+		return true
+	}
+
+	go func() {
+		defer coordinator.finish(msg.RequestID)
+		trySend(ch, Message{Type: MessageStatus, Status: "waiting_for_input", SessionID: msg.SessionID})
+		defer trySend(ch, Message{Type: MessageStatus, Status: "running", SessionID: msg.SessionID})
+		answer, err := runPendingInputCallback(ctx, opts.RequestUserInput, request, func() {
+			trySend(ch, Message{Type: MessageStatus, Status: "waiting_for_input", SessionID: msg.SessionID})
+		})
+		if err != nil {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "user input request did not receive an answer")
+			return
+		}
+		if err := ValidatePendingInputAnswer(request, answer); err != nil {
+			b.writeClaudeUserInputError(stdin, msg.RequestID, "user input answer is invalid")
+			return
+		}
+		nativeAnswers := make(map[string]string, len(answer.Answers))
+		for id, values := range answer.Answers {
+			nativeAnswers[questionTextByID[id]] = strings.Join(values, ", ")
+		}
+		nativeResponse := map[string]any{"answers": nativeAnswers}
+		if permissionResponse {
+			updatedInput["answers"] = nativeAnswers
+			nativeResponse = map[string]any{
+				"behavior":     "allow",
+				"updatedInput": updatedInput,
+			}
+		}
+		response := map[string]any{
+			"type": "control_response",
+			"response": map[string]any{
+				"subtype": "success", "request_id": msg.RequestID, "response": nativeResponse,
+			},
+		}
+		if err := writeJSONLine(stdin, response); err != nil {
+			b.cfg.Logger.Warn("claude: failed to write user input response", "request_id", msg.RequestID, "error", err)
+			return
+		}
+		if err := answer.MarkDelivered(ctx); err != nil {
+			coordinator.recordDeliveryFailure()
+			if b.cfg.Logger != nil {
+				b.cfg.Logger.Warn("claude: failed to acknowledge delivered user input", "request_id", msg.RequestID)
+			}
+		}
+	}()
+	return true
+}
+
+func explicitlyTrue(value *bool) bool {
+	return value != nil && *value
+}
+
+func explicitlyFalse(value *bool) bool {
+	return value != nil && !*value
+}
+
+func (b *claudeBackend) writeClaudeUserInputError(stdin interface{ Write([]byte) (int, error) }, requestID, message string) {
+	response := map[string]any{
+		"type":     "control_response",
+		"response": map[string]any{"subtype": "error", "request_id": requestID, "error": message},
+	}
+	if err := writeJSONLine(stdin, response); err != nil {
+		b.cfg.Logger.Warn("claude: failed to write user input error", "request_id", requestID, "error", err)
 	}
 }
 
@@ -599,17 +854,36 @@ type claudeMessageContent struct {
 }
 
 type claudeUsage struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	InputTokens              *int64 `json:"input_tokens"`
+	OutputTokens             *int64 `json:"output_tokens"`
+	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
 }
 
 type claudeResultModelUsage struct {
-	InputTokens              int64 `json:"inputTokens"`
-	OutputTokens             int64 `json:"outputTokens"`
-	CacheReadInputTokens     int64 `json:"cacheReadInputTokens"`
-	CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
+	InputTokens              *int64   `json:"inputTokens"`
+	OutputTokens             *int64   `json:"outputTokens"`
+	CacheReadInputTokens     *int64   `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens *int64   `json:"cacheCreationInputTokens"`
+	CostUSD                  *float64 `json:"costUSD"`
+	CostBasis                string   `json:"costBasis"`
+}
+
+func claudeTerminalResultText(msg claudeSDKMessage) string {
+	if !msg.IsError || strings.TrimSpace(msg.ResultText) != "" {
+		return msg.ResultText
+	}
+	// Keep documented enum values, never arbitrary provider error payloads.
+	subtype := "unknown"
+	switch msg.Subtype {
+	case "success", "error_max_turns", "error_during_execution", "error_max_budget_usd", "error_max_structured_output_retries":
+		subtype = msg.Subtype
+	}
+	detail := "claude returned an error result without details (subtype=" + subtype
+	if msg.NumTurns > 0 {
+		detail += fmt.Sprintf("; turns=%d", msg.NumTurns)
+	}
+	return detail + ")"
 }
 
 // claudeTerminalReasonFailure turns Claude Code's structured terminal_reason
@@ -652,10 +926,10 @@ func claudeResultUsage(msg claudeSDKMessage, fallbackModel string) map[string]To
 				continue
 			}
 			usage[model] = TokenUsage{
-				InputTokens:      u.InputTokens,
-				OutputTokens:     u.OutputTokens,
-				CacheReadTokens:  u.CacheReadInputTokens,
-				CacheWriteTokens: u.CacheCreationInputTokens,
+				InputTokens:      evidenceInt64Value(u.InputTokens),
+				OutputTokens:     evidenceInt64Value(u.OutputTokens),
+				CacheReadTokens:  evidenceInt64Value(u.CacheReadInputTokens),
+				CacheWriteTokens: evidenceInt64Value(u.CacheCreationInputTokens),
 			}
 		}
 		if len(usage) > 0 {
@@ -677,16 +951,169 @@ func claudeResultUsage(msg claudeSDKMessage, fallbackModel string) map[string]To
 	}
 	return map[string]TokenUsage{
 		model: {
-			InputTokens:      msg.Usage.InputTokens,
-			OutputTokens:     msg.Usage.OutputTokens,
-			CacheReadTokens:  msg.Usage.CacheReadInputTokens,
-			CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
+			InputTokens:      evidenceInt64Value(msg.Usage.InputTokens),
+			OutputTokens:     evidenceInt64Value(msg.Usage.OutputTokens),
+			CacheReadTokens:  evidenceInt64Value(msg.Usage.CacheReadInputTokens),
+			CacheWriteTokens: evidenceInt64Value(msg.Usage.CacheCreationInputTokens),
 		},
 	}
 }
 
-func claudeUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
-	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+func claudeUsageHasTokens(input, output, cacheRead, cacheWrite *int64) bool {
+	return evidenceInt64Value(input) > 0 || evidenceInt64Value(output) > 0 || evidenceInt64Value(cacheRead) > 0 || evidenceInt64Value(cacheWrite) > 0
+}
+
+func evidenceInt64Value(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func claudeAssistantExecutionEvidence(msg claudeSDKMessage) *ExecutionEvidence {
+	var content claudeMessageContent
+	if err := json.Unmarshal(msg.Message, &content); err != nil || content.Usage == nil {
+		return nil
+	}
+	evidence := claudeUsageExecutionEvidence(content.Usage, EvidenceSourceProviderEvent)
+	if validModelEvidenceName(content.Model) {
+		evidence.ProviderModel = ProviderModelEvidence{Model: cloneEvidenceString(&content.Model), Source: EvidenceSourceProviderEvent}
+	}
+	return evidence
+}
+
+func claudeResultExecutionEvidence(msg claudeSDKMessage) *ExecutionEvidence {
+	if len(msg.ModelUsage) > 0 {
+		result := &ExecutionEvidence{
+			Usage:         UsageEvidence{Source: EvidenceSourceModelUsage, Complete: true},
+			ProviderModel: ProviderModelEvidence{Source: EvidenceSourceMissing},
+			ProviderCost:  ProviderCostEvidence{Authority: CostAuthorityMissing, Basis: CostBasisMissing, Source: EvidenceSourceMissing},
+			ModelUsage:    ModelUsageInventoryEvidence{Complete: true, Source: EvidenceSourceModelUsage},
+		}
+		entries := make(map[string]ModelUsageEvidence, len(msg.ModelUsage))
+		costComplete := true
+		costObserved := false
+		costInvalid := false
+		var costAmount *int64
+		for model, usage := range msg.ModelUsage {
+			entryUsage := claudeUsageExecutionEvidence(&claudeUsage{
+				InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+				CacheReadInputTokens: usage.CacheReadInputTokens, CacheCreationInputTokens: usage.CacheCreationInputTokens,
+			}, EvidenceSourceModelUsage).Usage
+			result.Usage = mergeUsageEvidence(result.Usage, entryUsage)
+			entryCost := claudeModelUsageCostEvidence(usage)
+			if validModelEvidenceName(model) {
+				entries[model] = ModelUsageEvidence{Model: model, Usage: entryUsage, ProviderCost: entryCost}
+			} else {
+				result.ModelUsage.Complete = false
+			}
+			if !entryUsage.Complete {
+				result.ModelUsage.Complete = false
+			}
+			if usage.CostUSD == nil {
+				costComplete = false
+				continue
+			}
+			costObserved = true
+			if entryCost.invalid {
+				costInvalid = true
+				costAmount = nil
+			}
+			if !costInvalid {
+				next := sumEvidenceInt64(costAmount, entryCost.AmountUSDTicks)
+				if evidenceSumOverflowed(costAmount, entryCost.AmountUSDTicks, next) {
+					costInvalid = true
+					costAmount = nil
+				} else {
+					costAmount = next
+				}
+			}
+			if !entryCost.Complete {
+				costComplete = false
+			}
+		}
+		inventoryComplete := result.ModelUsage.Complete
+		result.ModelUsage = modelUsageInventoryFromMap(entries)
+		result.ModelUsage.Complete = inventoryComplete && !result.ModelUsage.Truncated && modelUsageEntriesComplete(result.ModelUsage.Entries)
+		result.ModelUsage.Source = EvidenceSourceModelUsage
+		if len(msg.ModelUsage) == 1 {
+			for model := range msg.ModelUsage {
+				if validModelEvidenceName(model) {
+					result.ProviderModel = ProviderModelEvidence{Model: cloneEvidenceString(&model), Source: EvidenceSourceModelUsage}
+				}
+			}
+		}
+		if costObserved {
+			basis := CostBasisProviderReported
+			authority := CostAuthorityProviderReported
+			source := EvidenceSourceModelUsage
+			if !costComplete || costInvalid {
+				basis = CostBasisUnknown
+			}
+			if costInvalid {
+				authority = CostAuthorityMissing
+				basis = CostBasisMissing
+				source = EvidenceSourceMissing
+			}
+			result.ProviderCost = ProviderCostEvidence{
+				AmountUSDTicks: costAmount,
+				Complete:       costComplete && !costInvalid,
+				Authority:      authority,
+				Basis:          basis,
+				Source:         source,
+				invalid:        costInvalid,
+			}
+		}
+		return result
+	}
+	if msg.Usage == nil {
+		return nil
+	}
+	result := claudeUsageExecutionEvidence(msg.Usage, EvidenceSourceProviderSummary)
+	if validModelEvidenceName(msg.Model) {
+		result.ProviderModel = ProviderModelEvidence{Model: cloneEvidenceString(&msg.Model), Source: EvidenceSourceProviderSummary}
+	}
+	return result
+}
+
+func claudeUsageExecutionEvidence(usage *claudeUsage, source string) *ExecutionEvidence {
+	result := &ExecutionEvidence{
+		Usage: UsageEvidence{
+			InputUncachedTokens: cloneEvidenceInt64(usage.InputTokens), InputCacheReadTokens: cloneEvidenceInt64(usage.CacheReadInputTokens),
+			InputCacheWriteTokens: cloneEvidenceInt64(usage.CacheCreationInputTokens), OutputTokens: cloneEvidenceInt64(usage.OutputTokens),
+			Complete: usage.InputTokens != nil && usage.CacheReadInputTokens != nil && usage.CacheCreationInputTokens != nil && usage.OutputTokens != nil,
+			Source:   source,
+		},
+		ProviderModel: ProviderModelEvidence{Source: EvidenceSourceMissing},
+		ProviderCost:  ProviderCostEvidence{Authority: CostAuthorityMissing, Basis: CostBasisMissing, Source: EvidenceSourceMissing},
+		ModelUsage:    ModelUsageInventoryEvidence{Source: EvidenceSourceMissing},
+	}
+	result.Usage = cloneUsageEvidence(result.Usage)
+	return result
+}
+
+func claudeModelUsageCostEvidence(usage claudeResultModelUsage) ProviderCostEvidence {
+	if usage.CostUSD == nil {
+		return ProviderCostEvidence{Authority: CostAuthorityMissing, Basis: CostBasisMissing, Source: EvidenceSourceMissing}
+	}
+	cost := *usage.CostUSD
+	scaled := cost * float64(CostUSDTicksPerUSD)
+	if cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) || math.IsInf(scaled, 0) || scaled >= math.Exp2(63) {
+		return ProviderCostEvidence{
+			Complete: false, Authority: CostAuthorityMissing, Basis: CostBasisMissing,
+			Source: EvidenceSourceMissing, invalid: true,
+		}
+	}
+	ticks := int64(math.Round(scaled))
+	basis := CostBasisProviderReported
+	complete := usage.CostBasis == CostBasisProviderReported
+	if !complete {
+		basis = CostBasisUnknown
+	}
+	return ProviderCostEvidence{
+		AmountUSDTicks: &ticks, Complete: complete,
+		Authority: CostAuthorityProviderReported, Basis: basis, Source: EvidenceSourceModelUsage,
+	}
 }
 
 type claudeContentBlock struct {
@@ -720,11 +1147,12 @@ func trySend(ch chan<- Message, msg Message) {
 // overridden by user-configured custom_args. Overriding these would break
 // the daemon↔Claude communication protocol.
 var claudeBlockedArgs = map[string]blockedArgMode{
-	"-p":                blockedStandalone, // non-interactive mode
-	"--output-format":   blockedWithValue,  // stream-json protocol
-	"--input-format":    blockedWithValue,  // stream-json protocol
-	"--permission-mode": blockedWithValue,  // bypassPermissions for autonomous operation
-	"--mcp-config":      blockedWithValue,  // set by daemon from agent.mcp_config
+	"-p":                       blockedStandalone, // non-interactive mode
+	"--output-format":          blockedWithValue,  // stream-json protocol
+	"--input-format":           blockedWithValue,  // stream-json protocol
+	"--permission-mode":        blockedWithValue,  // daemon-owned permission handling
+	"--permission-prompt-tool": blockedWithValue,  // stdio when pending input is available
+	"--mcp-config":             blockedWithValue,  // set by daemon from agent.mcp_config
 	// `--effort` is owned by the per-agent thinking_level picker so a
 	// user-supplied custom_arg cannot silently outvote it. The daemon
 	// injects --effort only when opts.ThinkingLevel is set; if a user
@@ -740,14 +1168,20 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		// AskUserQuestion is Claude Code's built-in interactive question tool.
-		// The daemon runs Claude in non-interactive stream-json mode and has
-		// no UI for the prompt to render in, so a call returns an empty
-		// answer and the agent ends up "inferring" silently — the user
-		// never sees the question (see GitHub #2588). User-facing
-		// clarification belongs in an issue comment instead.
-		"--disallowedTools", "AskUserQuestion",
+	}
+	if opts.RequestUserInput == nil {
+		args = append(args,
+			"--permission-mode", "bypassPermissions",
+			"--disallowedTools", "AskUserQuestion",
+		)
+	} else {
+		// Claude Code 2.1.261 emits AskUserQuestion as can_use_tool only when
+		// permission prompts are routed through stdio. Omitting --tools preserves
+		// the complete default coding-tool catalog.
+		args = append(args,
+			"--permission-mode", "manual",
+			"--permission-prompt-tool", "stdio",
+		)
 	}
 	if hasManagedMcpConfig(opts.McpConfig) {
 		// A saved agent-level config is authoritative, including an explicitly
@@ -775,23 +1209,35 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
-	blockedArgs := claudeBlockedArgs
-	if opts.ClaudeSettingsPath != "" {
-		// The daemon-owned --settings file is the enforcement layer for disabled
-		// inherited skills. Drop competing per-agent/default flags only while that
-		// policy is active, then append the managed file last.
-		blockedArgs = make(map[string]blockedArgMode, len(claudeBlockedArgs)+1)
-		for key, mode := range claudeBlockedArgs {
-			blockedArgs[key] = mode
-		}
-		blockedArgs["--settings"] = blockedWithValue
-	}
+	blockedArgs := claudeManagedSettingsArgs(opts)
 	args = append(args, filterCustomArgs(opts.ExtraArgs, blockedArgs, logger)...)
 	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
+	if opts.ProjectConfigurationPolicy != "" {
+		sources := "user"
+		if opts.ProjectConfigurationPolicy == "trusted" {
+			sources = "user,project,local"
+		}
+		args = append(args, "--setting-sources", sources)
+	}
 	if opts.ClaudeSettingsPath != "" {
 		args = append(args, "--settings", opts.ClaudeSettingsPath)
 	}
 	return args
+}
+
+func claudeManagedSettingsArgs(opts ExecOptions) map[string]blockedArgMode {
+	if opts.ProjectConfigurationPolicy == "" && opts.ClaudeSettingsPath == "" {
+		return claudeBlockedArgs
+	}
+	blocked := make(map[string]blockedArgMode, len(claudeBlockedArgs)+2)
+	for key, mode := range claudeBlockedArgs {
+		blocked[key] = mode
+	}
+	blocked["--settings"] = blockedWithValue
+	if opts.ProjectConfigurationPolicy != "" {
+		blocked["--setting-sources"] = blockedWithValue
+	}
+	return blocked
 }
 
 func writeClaudeInput(w io.Writer, prompt string) error {

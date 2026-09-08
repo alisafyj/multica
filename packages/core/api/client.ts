@@ -33,6 +33,10 @@ import type {
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
+  TaskRunEvidenceListResponse,
+  PendingInput,
+  ListPendingInputsResponse,
+  AnswerPendingInputRequest,
   AgentActivityBucket,
   AgentRunCount,
   WorkspaceWorkingAgent,
@@ -448,6 +452,9 @@ import {
   CreateIssueResponseSchema,
   IssueSchema,
   AgentTaskSchema,
+  TaskRunEvidenceListResponseSchema,
+  PendingInputSchema,
+  ListPendingInputsResponseSchema,
   SourceContextPreviewSchema,
   CommentSubIssueTaskResponseSchema,
   ListWebhookDeliveriesResponseSchema,
@@ -599,6 +606,8 @@ import {
   EMPTY_LIST_GITHUB_REPOSITORIES_RESPONSE,
   RuntimeModelListRequestSchema,
   MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+  RuntimeLocalSkillListRequestSchema,
+  MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
   PMOConfigSchema,
   PMORunSchema,
   PMOSyncLinkSchema,
@@ -663,6 +672,10 @@ import {
   EMPTY_WORKSPACE_MCP_SERVER,
   EMPTY_PLUGIN_INSTALLATION_LIST,
   EMPTY_PLUGIN_PREVIEW,
+  ProjectResourceSchema,
+  ListProjectResourcesResponseSchema,
+  EMPTY_PROJECT_RESOURCE,
+  EMPTY_LIST_PROJECT_RESOURCES_RESPONSE,
   EMPTY_PLUGIN_PACKAGE,
   EMPTY_PLUGIN_PACKAGE_LIST,
   EMPTY_PLUGIN_SURFACE_LAUNCH,
@@ -2571,16 +2584,34 @@ export class ApiClient {
   async initiateListLocalSkills(
     runtimeId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills`, {
       method: "POST",
     });
+    return parseWithFallback<RuntimeLocalSkillListRequest>(
+      raw,
+      RuntimeLocalSkillListRequestSchema,
+      { ...MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST, runtime_id: runtimeId },
+      { endpoint: "POST /api/runtimes/{id}/local-skills" },
+    );
   }
 
   async getListLocalSkillsResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/${runtimeId}/local-skills/${requestId}`,
+    );
+    return parseWithFallback<RuntimeLocalSkillListRequest>(
+      raw,
+      RuntimeLocalSkillListRequestSchema,
+      {
+        ...MALFORMED_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+        id: requestId,
+        runtime_id: runtimeId,
+      },
+      { endpoint: "GET /api/runtimes/{id}/local-skills/{requestId}" },
+    );
   }
 
   async initiateImportLocalSkill(
@@ -2667,6 +2698,59 @@ export class ApiClient {
     return parseWithFallback<AgentTask[]>(raw, AgentTaskListSchema, [], {
       endpoint: "GET /api/issues/:id/task-runs",
     });
+  }
+
+  async listTaskRunEvidence(taskId: string): Promise<TaskRunEvidenceListResponse | null> {
+    try {
+      const raw = await this.fetch<unknown>(
+        `/api/tasks/${encodeURIComponent(taskId)}/run-evidence`,
+      );
+      return parseWithFallback<TaskRunEvidenceListResponse | null>(
+        raw,
+        TaskRunEvidenceListResponseSchema,
+        null,
+        { endpoint: "GET /api/tasks/:id/run-evidence" },
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  async listIssuePendingInputs(issueId: string): Promise<ListPendingInputsResponse> {
+    try {
+      const raw = await this.fetch<unknown>(
+        `/api/issues/${encodeURIComponent(issueId)}/pending-inputs`,
+      );
+      return parseWithFallback<ListPendingInputsResponse>(
+        raw,
+        ListPendingInputsResponseSchema,
+        { data: [] },
+        { endpoint: "GET /api/issues/:id/pending-inputs" },
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return { data: [] };
+      throw error;
+    }
+  }
+
+  async answerIssuePendingInput(
+    issueId: string,
+    pendingInputId: string,
+    request: AnswerPendingInputRequest,
+  ): Promise<PendingInput> {
+    const raw = await this.fetch<unknown>(
+      `/api/issues/${encodeURIComponent(issueId)}/pending-inputs/${encodeURIComponent(pendingInputId)}/answer`,
+      {
+        method: "POST",
+        body: JSON.stringify(request),
+      },
+    );
+    const parsed = parseWithFallback<PendingInput | null>(raw, PendingInputSchema.nullable(), null, {
+      endpoint: "POST /api/issues/:id/pending-inputs/:pendingInputId/answer",
+    });
+    if (!parsed) throw new Error("Malformed pending input answer response");
+    return parsed;
   }
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
@@ -4098,16 +4182,25 @@ export class ApiClient {
   async listProjectResources(
     projectId: string,
   ): Promise<ListProjectResourcesResponse> {
-    return this.fetch(`/api/projects/${projectId}/resources`);
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`);
+    return parseWithFallback(
+      raw,
+      ListProjectResourcesResponseSchema,
+      EMPTY_LIST_PROJECT_RESOURCES_RESPONSE,
+      { endpoint: "GET /api/projects/:id/resources" },
+    );
   }
 
   async createProjectResource(
     projectId: string,
     data: CreateProjectResourceRequest,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+      endpoint: "POST /api/projects/:id/resources",
     });
   }
 
@@ -4116,9 +4209,12 @@ export class ApiClient {
     resourceId: string,
     data: UpdateProjectResourceRequest,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+      endpoint: "PUT /api/projects/:id/resources/:resourceId",
     });
   }
 

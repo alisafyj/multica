@@ -450,6 +450,17 @@
   "timeline": {
     "loading": "Loading..."
   },
+  "pending_input": {
+    "title": "Agent needs input",
+    "waiting": "Waiting for your answer",
+    "answered": "Answered",
+    "cancelled": "Cancelled",
+    "expired": "Expired",
+    "unsupported_version": "Update the app to answer this request",
+    "other_placeholder": "Other answer",
+    "send": "Send answers",
+    "answer_failed": "Failed to send answers. Try again."
+  },
   "activity": {
     "created": "created this issue",
     "self_assigned": "self-assigned this issue",
@@ -635,6 +646,35 @@
     "status_completed": "Completed",
     "status_failed": "Failed",
     "status_cancelled": "Cancelled",
+    "evidence": {
+      "toggle": "View run evidence",
+      "loading": "Loading run evidence…",
+      "failed": "Run evidence could not be loaded.",
+      "unavailable": "Run evidence is unavailable on this server.",
+      "empty": "No run evidence has been reported.",
+      "unknown": "Unknown",
+      "attempt": "Attempt {{attempt}}",
+      "revision": "Revision {{revision}}",
+      "stages": "Stage durations",
+      "queue": "Queue",
+      "preparation": "Preparation",
+      "first_tool": "First tool",
+      "execution": "Execution",
+      "finalization": "Finalization",
+      "tokens": "Token buckets",
+      "input_uncached": "Input, uncached",
+      "cache_read": "Cache read",
+      "cache_write": "Cache write",
+      "output": "Output",
+      "incomplete": "Partial",
+      "requested_model": "Requested model",
+      "client_effective_model": "Client-effective model",
+      "provider_reported_model": "Provider-reported model",
+      "runtime_version": "Runtime version",
+      "runtime_hash": "Runtime hash",
+      "provider_cost_not_invoice": "Provider-reported cost (not an invoice)",
+      "provider_cost_provenance": "Source: {{source}} · Basis: {{basis}}"
+    },
     "attribution": {
       "on_behalf_of": "On behalf of {{name}}",
       "someone": "someone",
@@ -676,7 +716,9 @@
     "note_unpriced_one": "{{count}} run has no recorded usage and is not counted in the total.",
     "note_unpriced_other": "{{count}} runs have no recorded usage and are not counted in the total.",
     "note_unmapped": "No price on file for {{models}}; their tokens are counted but their cost is not.",
-    "note_estimate": "Cost is estimated from published model rates, except where the provider reported its own figure."
+    "amount_unknown": "Unknown",
+    "amount_partial": "{{amount}} (partial)",
+    "note_estimate": "Cost uses provider-reported amounts or published model rates. It is not a final bill."
   },
   "terminate_dialog": {
     "title": "Stop this run?",

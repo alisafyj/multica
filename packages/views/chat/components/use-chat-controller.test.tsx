@@ -98,6 +98,7 @@ vi.mock("@multica/core/projects/queries", () => ({
 // Steerable per test: the invoke rule is what decides whether an OPEN session's
 // agent is still runnable. Default true so every existing case is unaffected.
 const invokableAgentIds = vi.hoisted(() => ({ current: null as string[] | null }));
+const presenceAvailability = vi.hoisted(() => ({ current: "online" }));
 vi.mock("@multica/views/issues/components", () => ({
   canAssignAgent: (agent: { id: string }) =>
     invokableAgentIds.current === null ||
@@ -125,7 +126,7 @@ vi.mock("@multica/core/api", () => ({
 vi.mock("@multica/core/agents", () => ({
   isAgentRuntimeBound: (agent: { runtime_id: string; runtime_bound?: boolean }) =>
     agent.runtime_bound !== false && agent.runtime_id.length > 0,
-  useAgentPresenceDetail: () => ({ availability: "online" }),
+  useAgentPresenceDetail: () => ({ availability: presenceAvailability.current }),
   useCustomizeConversationStartersHref: () => null,
   useWorkspaceAgentAvailability: () => "available",
 }));
@@ -1194,6 +1195,46 @@ describe("useChatController revoked invoke permission", () => {
 
   afterEach(() => {
     invokableAgentIds.current = null;
+    presenceAvailability.current = "online";
+  });
+
+  it("allows a bound permitted agent when runtime health is not visible", async () => {
+    presenceAvailability.current = "unknown";
+    invokableAgentIds.current = ["agent-a"];
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      task_id: "task-1",
+      message_id: "message-1",
+      created_at: "2026-07-08T00:00:00Z",
+      supports_queue: true,
+      queued: false,
+    });
+    const result = setup("revoked", [revokedSession], [agentA]);
+
+    let sent: boolean | undefined;
+    await act(async () => {
+      sent = await result.current.handleSend("run this");
+    });
+
+    expect(sent).toBe(true);
+    expect(vi.mocked(api.sendChatMessage)).toHaveBeenCalledOnce();
+  });
+
+  it("refuses an actually unbound agent even when invoke permission allows it", async () => {
+    invokableAgentIds.current = ["agent-a"];
+    const unboundAgent = {
+      ...agentA,
+      runtime_id: "",
+      runtime_bound: false,
+    } as Agent;
+    const result = setup("revoked", [revokedSession], [unboundAgent]);
+
+    let sent: boolean | undefined;
+    await act(async () => {
+      sent = await result.current.handleSend("run this");
+    });
+
+    expect(sent).toBe(false);
+    expect(vi.mocked(api.sendChatMessage)).not.toHaveBeenCalled();
   });
 
   it("flags the open session's agent as revoked while still resolving it", () => {

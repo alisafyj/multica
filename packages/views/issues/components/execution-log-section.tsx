@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, RotateCcw, Square, Zap } from "lucide-react";
+import { Activity, ChevronRight, Loader2, RotateCcw, Square, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -35,14 +35,15 @@ import {
 import { useT } from "../../i18n";
 import {
   formatTokens,
-  formatUsd,
   summarizeTaskUsage,
   summarizeTaskUsageAcross,
 } from "../../runtimes/utils";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 import { IssueUsageDialog } from "./issue-usage-dialog";
+import { useUsageAmountFormatter } from "./use-usage-amount-formatter";
 import { TaskStatusIcon } from "./task-status-icon";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
+import { TaskRunEvidenceDetails } from "./task-run-evidence-details";
 
 // Right-panel section that lists every agent run for this issue. Active
 // runs sit at the top (always visible when present); past runs (terminal
@@ -69,6 +70,7 @@ import { useStatusLabel, useTriggerText } from "./task-run-labels";
 // list updates without polling.
 
 interface ExecutionLogSectionProps {
+  workspaceId: string;
   issueId: string;
   /** Shown in the usage dialog's subtitle so the panel names what it totals. */
   identifier?: string;
@@ -83,10 +85,7 @@ const PAST_STATUS_RANK: Record<string, number> = {
   completed: 2,
 };
 
-export function ExecutionLogSection({
-  issueId,
-  identifier,
-}: ExecutionLogSectionProps) {
+export function ExecutionLogSection({ workspaceId, issueId, identifier }: ExecutionLogSectionProps) {
   const { t } = useT("issues");
   const [open, setOpen] = useState(true);
   const [showPast, setShowPast] = useState(false);
@@ -217,7 +216,7 @@ export function ExecutionLogSection({
               {showPast && (
                 <div className="mt-0.5 space-y-0.5">
                   {pastTasks.map((task) => (
-                    <PastRow key={task.id} task={task} issueId={issueId} />
+                    <PastRow key={task.id} task={task} workspaceId={workspaceId} issueId={issueId} />
                   ))}
                 </div>
               )}
@@ -262,6 +261,7 @@ export function IssueUsageTotal({
   onOpen: () => void;
 }) {
   const { t } = useT("issues");
+  const formatAmount = useUsageAmountFormatter();
   // Custom rates are read imperatively inside `estimateCost`, so a saved rate
   // change does not re-render this on its own — subscribe and make the memo
   // depend on the snapshot, or the header total keeps quoting the old price
@@ -296,7 +296,7 @@ export function IssueUsageTotal({
           {formatTokens(total.tokens)}
         </span>
         <span className={`text-faint-foreground ${narrowTier}`}>·</span>
-        <span className="text-muted-foreground">{formatUsd(total.cost)}</span>
+        <span className="text-muted-foreground">{formatAmount(total.cost, total.costComplete)}</span>
       </TooltipTrigger>
       <TooltipContent>
         {t(($) => $.execution_log.usage_total_tooltip)}
@@ -553,11 +553,20 @@ export function ActiveTaskRow({
 
 // ─── Past row ──────────────────────────────────────────────────────────────
 
-function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
+function PastRow({
+  task,
+  workspaceId,
+  issueId,
+}: {
+  task: AgentTask;
+  workspaceId: string;
+  issueId: string;
+}) {
   const { t } = useT("issues");
   const { t: tAgents } = useT("agents");
   const timeAgo = useTimeAgo();
   const [retrying, setRetrying] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const label = useStatusLabel(task.status);
   const trigger = useTriggerText(task);
   const time = task.completed_at ? timeAgo(task.completed_at) : "—";
@@ -639,66 +648,81 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   };
 
   return (
-    <RowShell task={task} title={rowTitle}>
-      <TriggerText text={trigger} />
-      <TaskCommentCoverage task={task} />
-      <RowStatus title={statusTitle}>
-        <TaskStatusIcon status={task.status} />
-        <span className="sr-only">
-          {[failureLabel ?? label, time].filter(Boolean).join(" · ")}
-        </span>
-        {usage ? (
-          <span className="tabular-nums">{formatTokens(usage.tokens)}</span>
-        ) : (
-          <span className="text-faint-foreground">—</span>
-        )}
-      </RowStatus>
-      <RowActions>
-        <TranscriptButton
-          task={task}
-          agentName=""
-          title={t(($) => $.execution_log.transcript_tooltip)}
-        />
-        {canRetry && (
+    <div>
+      <RowShell task={task} title={rowTitle}>
+        <TriggerText text={trigger} />
+        <TaskCommentCoverage task={task} />
+        <RowStatus title={statusTitle}>
+          <TaskStatusIcon status={task.status} />
+          <span className="sr-only">
+            {[failureLabel ?? label, time].filter(Boolean).join(" · ")}
+          </span>
+          {usage ? (
+            <span className="tabular-nums">{formatTokens(usage.tokens)}</span>
+          ) : (
+            <span className="text-faint-foreground">—</span>
+          )}
+        </RowStatus>
+        <RowActions>
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
                   type="button"
-                  onClick={handleRetry}
-                  disabled={retrying}
-                  aria-label={t(
-                    ($) =>
-                      $.execution_log[
-                        budgetExhausted
-                          ? "continue_task_aria"
-                          : "retry_task_aria"
-                      ],
-                  )}
+                  onClick={() => setEvidenceOpen((value) => !value)}
+                  aria-expanded={evidenceOpen}
+                  aria-label={t(($) => $.execution_log.evidence.toggle)}
                 />
               }
-              className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             >
-              {retrying ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RotateCcw className="h-3.5 w-3.5" />
-              )}
+              <Activity className="h-3.5 w-3.5" />
             </TooltipTrigger>
-            <TooltipContent>
-              {t(
-                ($) =>
-                  $.execution_log[
-                    budgetExhausted
-                      ? "continue_task_tooltip"
-                      : "retry_task_tooltip"
-                  ],
-              )}
-            </TooltipContent>
+            <TooltipContent>{t(($) => $.execution_log.evidence.toggle)}</TooltipContent>
           </Tooltip>
-        )}
-      </RowActions>
-    </RowShell>
+          <TranscriptButton task={task} agentName="" title={t(($) => $.execution_log.transcript_tooltip)} />
+          {canRetry && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={handleRetry}
+                    disabled={retrying}
+                    aria-label={t(
+                      ($) =>
+                        $.execution_log[
+                          budgetExhausted
+                            ? "continue_task_aria"
+                            : "retry_task_aria"
+                        ],
+                    )}
+                  />
+                }
+                className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {retrying ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>
+                {t(
+                  ($) =>
+                    $.execution_log[
+                      budgetExhausted
+                        ? "continue_task_tooltip"
+                        : "retry_task_tooltip"
+                    ],
+                )}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </RowActions>
+      </RowShell>
+      {evidenceOpen && <TaskRunEvidenceDetails workspaceId={workspaceId} taskId={task.id} />}
+    </div>
   );
 }
 

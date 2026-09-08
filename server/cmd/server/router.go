@@ -1527,6 +1527,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/claim", h.ClaimTasksByRuntime)
 		r.Post("/claim", h.ClaimTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/prepare-lease", h.ExtendTaskPrepareLease)
+		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/run-evidence", h.ReportTaskRunEvidence)
+		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/pending-inputs", h.RegisterTaskPendingInput)
+		r.Get("/runtimes/{runtimeId}/tasks/{taskId}/pending-inputs/{pendingId}", h.GetTaskPendingInputForDaemon)
+		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/pending-inputs/{pendingId}/ack", h.AckTaskPendingInput)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/skill-bundles/resolve", h.ResolveTaskSkillBundles)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
@@ -1974,6 +1978,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
+				r.With(handler.RequireHumanActor).Get("/{issueId}/pending-inputs", h.ListTaskPendingInputsForIssue)
+				r.With(handler.RequireHumanActor).Post("/{issueId}/pending-inputs/{pendingId}/answer", h.AnswerTaskPendingInput)
 				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Get("/window-usage", h.GetIssueWindowUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
@@ -2036,6 +2042,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/run-evidence", h.ListTaskRunEvidenceByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick actions (definitions; running one lives under

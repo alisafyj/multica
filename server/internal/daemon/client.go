@@ -140,6 +140,15 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// withDaemonToken shares transport and identity without changing login credentials
+// or copying mutexes. An absent claim credential never falls back to login auth.
+func (c *Client) withDaemonToken(token string) *Client {
+	return &Client{
+		baseURL: c.baseURL, token: token, client: c.client,
+		platform: c.platform, version: c.version, os: c.os,
+	}
+}
+
 func cloneDefaultTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
 		return transport.Clone()
@@ -217,10 +226,12 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityExecutionManifestV1,
 		protocol.DaemonCapabilityAgentSkillV1,
 		protocol.DaemonCapabilityRemoteMCPV1,
+		protocol.DaemonCapabilityRuntimeMCPSelectionV1,
 		protocol.DaemonCapabilityProjectDesignSystemV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
+		protocol.DaemonCapabilityTaskRunEvidenceModelUsageV1,
 		protocol.DaemonCapabilityPlatformSkillV1,
 	}
 }
@@ -464,6 +475,19 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 
 func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+}
+
+func (c *Client) StartTaskWithIssueStart(ctx context.Context, taskID string, report IssueStartReport) (*IssueStartState, error) {
+	var response struct {
+		IssueStart *IssueStartState `json:"issue_start,omitempty"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), report, &response); err != nil {
+		return nil, err
+	}
+	if response.IssueStart == nil {
+		return nil, errors.New("start task: server omitted issue_start result")
+	}
+	return response.IssueStart, nil
 }
 
 func (c *Client) ReportOpenDesignPreflight(ctx context.Context, taskID string, report opendesign.PreflightReport) error {
@@ -831,6 +855,11 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 		case *DesignDocumentPackageReceipt:
 			if value != nil {
 				body["design_document_package"] = value
+			}
+		case IssueCompletionReport:
+			if value.Intent != nil {
+				body["claim_generation"] = value.ClaimGeneration
+				body["issue_completion"] = value.Intent
 			}
 		case nil:
 		default:

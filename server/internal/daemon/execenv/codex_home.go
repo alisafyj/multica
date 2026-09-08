@@ -243,6 +243,11 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 			}
 		}
 	}
+	if configSyncErr != nil {
+		// A reused private home may still contain the previous task's plugin
+		// policy. Never interpret a failed refresh as current user intent.
+		return fmt.Errorf("sync task-private Codex config.toml failed")
+	}
 	// Drop `[[skills.config]]` entries inherited from the user's
 	// ~/.codex/config.toml. Codex Desktop writes plugin-backed skills with a
 	// `name` and no `path`, which the CLI's stricter TOML parser rejects with

@@ -47,6 +47,7 @@ import {
   checkQuickCreateCliVersion,
   checkQuickCreateFieldsCliVersion,
   readRuntimeCliVersion,
+  type CliVersionCheck,
 } from "@multica/core/runtimes";
 import { useShortcut } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
@@ -102,6 +103,15 @@ type ActorSelection =
 // description + agent across the agent→manual flip; project_id rides through
 // the same carry channel manual→agent uses, so the manual panel reads it
 // from `data?.project_id` without a parallel store.
+function applyAttestedQuickCreateCapability(
+  fallback: CliVersionCheck,
+  supported: boolean | undefined,
+): CliVersionCheck {
+  if (supported === undefined) return fallback;
+  if (supported) return { ...fallback, state: "ok" };
+  return { ...fallback, state: "missing", current: "" };
+}
+
 export function AgentCreatePanel({
   onClose,
   onSwitchMode,
@@ -322,7 +332,13 @@ export function AgentCreatePanel({
     setActiveMode("agent");
   }, [setActiveMode]);
 
-  // Daemon CLI version gate. The agent-create flow needs the runtime's
+  // Daemon CLI capability gate. New servers project the authoritative result
+  // on the authorized agent response, so a member does not need visibility
+  // into another user's private runtime metadata. Older servers omit those
+  // fields and continue through the legacy runtime-version check below when
+  // that runtime is visible; otherwise the server remains the trust boundary.
+  //
+  // The agent-create flow needs the runtime's
   // bundled multica CLI to be ≥ MIN_QUICK_CREATE_CLI_VERSION; older
   // daemons handle attachments and partial-failure retries incorrectly
   // (see PR #1851 / MUL-1496). Pre-check on the picker so the user gets
@@ -358,12 +374,36 @@ export function AgentCreatePanel({
     () => checkQuickCreateFieldsCliVersion(runtimeCliVersion),
     [runtimeCliVersion],
   );
+  const effectiveBaseVersionCheck = useMemo(
+    () =>
+      applyAttestedQuickCreateCapability(
+        baseVersionCheck,
+        selectedAgent?.quick_create_supported,
+      ),
+    [baseVersionCheck, selectedAgent?.quick_create_supported],
+  );
+  const effectiveFieldVersionCheck = useMemo(
+    () =>
+      applyAttestedQuickCreateCapability(
+        fieldVersionCheck,
+        selectedAgent?.quick_create_fields_supported,
+      ),
+    [fieldVersionCheck, selectedAgent?.quick_create_fields_supported],
+  );
   const usesExplicitFields = priority !== "none" || dueDate !== null;
-  const versionCheck = usesExplicitFields ? fieldVersionCheck : baseVersionCheck;
+  const versionCheck = usesExplicitFields
+    ? effectiveFieldVersionCheck
+    : effectiveBaseVersionCheck;
+  const canEvaluateBaseVersion =
+    selectedAgent?.quick_create_supported !== undefined || canPrecheckVersion;
+  const canEvaluateFieldVersion =
+    selectedAgent?.quick_create_fields_supported !== undefined ||
+    canPrecheckVersion;
   const versionBlocked =
-    canPrecheckVersion &&
-    (baseVersionCheck.state !== "ok" ||
-      (usesExplicitFields && fieldVersionCheck.state !== "ok"));
+    (canEvaluateBaseVersion && effectiveBaseVersionCheck.state !== "ok") ||
+    (usesExplicitFields &&
+      canEvaluateFieldVersion &&
+      effectiveFieldVersionCheck.state !== "ok");
 
   const initialPrompt = draft.agent.prompt || (data?.prompt as string) || "";
   // The editor is uncontrolled — we read the latest markdown via the ref at

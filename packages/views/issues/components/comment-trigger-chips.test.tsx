@@ -1,11 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import type { CommentTriggerPreviewAgent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 
+const presence = vi.hoisted(() => ({ availability: "online" }));
+
 vi.mock("@multica/core/agents", () => ({
-  useAgentPresenceDetail: () => ({ availability: "online", workload: "idle" }),
+  useAgentPresenceDetail: () => ({
+    availability: presence.availability,
+    workload: "idle",
+  }),
+}));
+
+vi.mock("@multica/ui/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ render }: { render: React.ReactNode }) => <>{render}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -31,6 +42,20 @@ const bob: CommentTriggerPreviewAgent = {
 };
 
 describe("CommentTriggerChips", () => {
+  beforeEach(() => {
+    presence.availability = "online";
+  });
+
+  it("does not call a bound agent offline when runtime health is private", () => {
+    presence.availability = "unknown";
+    renderWithI18n(
+      <CommentTriggerChips agents={[walt]} suppressedAgentIds={new Set()} onToggle={vi.fn()} />,
+    );
+
+    expect(screen.getByRole("button")).toHaveTextContent("Will start when sent");
+    expect(screen.queryByText("Offline now — starts once online.")).not.toBeInTheDocument();
+  });
+
   it("renders nothing without agents", () => {
     const { container } = renderWithI18n(
       <CommentTriggerChips agents={[]} suppressedAgentIds={new Set()} onToggle={vi.fn()} />,

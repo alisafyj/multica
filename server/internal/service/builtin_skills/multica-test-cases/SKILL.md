@@ -276,6 +276,10 @@ reported and can ask the daemon to scan again.
 ## Executing cases
 
 Running a case, recording results, uploading evidence and opening defects are
-covered by the `multica-running-tests` skill (`multica test run …`,
-`multica test result set …`, `multica test evidence add …`,
-`multica test defect open …`). This skill stops at the case as a document.
+covered by the `multica-running-tests` skill. This skill stops at the case as a
+document.
+Creating or editing a case is not evidence that it ran or passed. Before
+executing an assigned run, read `multica-running-tests` for capability discovery,
+execution, evidence, and result semantics. If that skill or a required capability
+is unavailable, report the limitation rather than inventing commands or claiming
+execution succeeded.

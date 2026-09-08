@@ -184,6 +184,10 @@ export const issueKeys = {
   tasksAll: () => ["issues", "tasks"] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
+  pendingInputsAll: (wsId: string) =>
+    [...issueKeys.all(wsId), "pending-inputs"] as const,
+  pendingInputs: (wsId: string, issueId: string) =>
+    [...issueKeys.pendingInputsAll(wsId), issueId] as const,
   sourceContextPreview: (wsId: string, anchorCommentId: string) =>
     ["source-context", "preview", wsId, anchorCommentId] as const,
 };

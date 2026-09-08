@@ -885,12 +885,7 @@ func TestLoadConfig_ToolWatchdogDefaultsToIdleWatchdog(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_CodexSemanticInactivityDerivesFromWatchdog pins the fix for
-// the gap the 2h change left behind: Codex's own semantic-inactivity timer is
-// not tool-aware, so if it keeps a 10m ceiling it kills a quiet build long
-// before the daemon budget that was supposed to protect it, and the raised
-// budget is a lie for Codex users.
-func TestLoadConfig_CodexSemanticInactivityDerivesFromWatchdog(t *testing.T) {
+func TestLoadConfig_CodexSemanticAndToolBudgetsAreIndependent(t *testing.T) {
 	stageFakeAgent(t)
 	for _, key := range []string{
 		"MULTICA_AGENT_IDLE_WATCHDOG",
@@ -900,59 +895,41 @@ func TestLoadConfig_CodexSemanticInactivityDerivesFromWatchdog(t *testing.T) {
 		t.Setenv(key, "")
 	}
 
-	load := func(t *testing.T) Config {
+	load := func(t *testing.T, overrides Overrides) Config {
 		t.Helper()
-		cfg, err := LoadConfig(Overrides{
-			ServerURL:      "http://localhost:8080",
-			WorkspacesRoot: t.TempDir(),
-		})
+		overrides.ServerURL = "http://localhost:8080"
+		overrides.WorkspacesRoot = t.TempDir()
+		cfg, err := LoadConfig(overrides)
 		if err != nil {
 			t.Fatalf("LoadConfig: %v", err)
 		}
 		return cfg
 	}
 
-	cfg := load(t)
-	if cfg.CodexSemanticInactivityTimeout != DefaultAgentIdleWatchdog {
-		t.Fatalf("CodexSemanticInactivityTimeout = %s, want the idle budget %s", cfg.CodexSemanticInactivityTimeout, DefaultAgentIdleWatchdog)
+	assertBudgets := func(t *testing.T, cfg Config, semantic, tool time.Duration) {
+		t.Helper()
+		if cfg.CodexSemanticInactivityTimeout != semantic || cfg.CodexInFlightToolTimeout != tool {
+			t.Fatalf("semantic=%s tool=%s, want semantic=%s tool=%s", cfg.CodexSemanticInactivityTimeout, cfg.CodexInFlightToolTimeout, semantic, tool)
+		}
 	}
 
-	// Raising the idle budget carries Codex with it.
+	assertBudgets(t, load(t, Overrides{}), 10*time.Minute, 2*time.Hour)
+
 	t.Setenv("MULTICA_AGENT_IDLE_WATCHDOG", "6h")
-	if got := load(t).CodexSemanticInactivityTimeout; got != 6*time.Hour {
-		t.Fatalf("CodexSemanticInactivityTimeout = %s, want 6h", got)
-	}
-
-	// A wider tool budget wins: this timer cannot see that a tool is in flight,
-	// so it has to be sized like the larger of the two or it re-creates the very
-	// bug being fixed, one tier up.
-	t.Setenv("MULTICA_AGENT_TOOL_WATCHDOG", "9h")
-	if got := load(t).CodexSemanticInactivityTimeout; got != 9*time.Hour {
-		t.Fatalf("CodexSemanticInactivityTimeout = %s, want the wider tool budget 9h", got)
-	}
-
-	// A tool budget of 0 means "never force-stop during a tool", which this
-	// timer cannot express; it falls back to the idle budget rather than
-	// silently running unbounded.
 	t.Setenv("MULTICA_AGENT_TOOL_WATCHDOG", "0")
-	if got := load(t).CodexSemanticInactivityTimeout; got != 6*time.Hour {
-		t.Fatalf("CodexSemanticInactivityTimeout = %s, want the idle budget 6h when the tool budget is unbounded", got)
-	}
+	assertBudgets(t, load(t, Overrides{}), 10*time.Minute, 6*time.Hour)
 
-	// The explicit env still wins over the derivation.
-	t.Setenv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", "20m")
-	if got := load(t).CodexSemanticInactivityTimeout; got != 20*time.Minute {
-		t.Fatalf("CodexSemanticInactivityTimeout = %s, want 20m from env", got)
-	}
+	t.Setenv("MULTICA_AGENT_TOOL_WATCHDOG", "9h")
+	assertBudgets(t, load(t, Overrides{}), 10*time.Minute, 9*time.Hour)
 
-	// Disabling the watchdog suite has never disabled this timer; Codex keeps
-	// its own built-in default rather than becoming unbounded.
-	t.Setenv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", "")
 	t.Setenv("MULTICA_AGENT_IDLE_WATCHDOG", "0")
-	t.Setenv("MULTICA_AGENT_TOOL_WATCHDOG", "")
-	if got := load(t).CodexSemanticInactivityTimeout; got != DefaultCodexSemanticInactivityTimeout {
-		t.Fatalf("CodexSemanticInactivityTimeout = %s, want the codex built-in %s when watchdogs are off", got, DefaultCodexSemanticInactivityTimeout)
-	}
+	t.Setenv("MULTICA_AGENT_TOOL_WATCHDOG", "0")
+	assertBudgets(t, load(t, Overrides{}), 10*time.Minute, 2*time.Hour)
+
+	t.Setenv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", "20m")
+	assertBudgets(t, load(t, Overrides{}), 20*time.Minute, 2*time.Hour)
+
+	assertBudgets(t, load(t, Overrides{CodexSemanticInactivityTimeout: 3 * time.Hour}), 3*time.Hour, 3*time.Hour)
 }
 
 func TestLoadConfig_OpenCodeIdleWatchdog(t *testing.T) {

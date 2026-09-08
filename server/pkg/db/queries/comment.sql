@@ -565,6 +565,45 @@ SELECT EXISTS (
       AND created_at >= @since
 ) AS commented;
 
+-- name: GetExactAgentTaskFinalComment :one
+-- A typed task completion uses the task UUID as its durable source key. Parent
+-- is part of the identity because one coalesced run can owe the same final body
+-- to several distinct threads. Progress rows never satisfy this lookup.
+SELECT * FROM comment
+WHERE issue_id = @issue_id
+  AND workspace_id = @workspace_id
+  AND author_type = 'agent'
+  AND author_id = @author_id
+  AND type = 'comment'
+  AND source_task_id = @source_task_id
+  AND parent_id IS NOT DISTINCT FROM sqlc.narg(parent_id)::uuid
+  AND content = @content
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
+
+-- name: ListAgentTaskFinalCommentsForParent :many
+-- Bounded logical-dedupe candidates for one managed task delivery target.
+-- The caller applies the same redaction/unescape/truncation transform as typed
+-- completion, while ordinary comment rows remain stored exactly as authored.
+SELECT * FROM comment
+WHERE issue_id = @issue_id
+  AND workspace_id = @workspace_id
+  AND author_type = 'agent'
+  AND author_id = @author_id
+  AND type = 'comment'
+  AND source_task_id = @source_task_id
+  AND parent_id IS NOT DISTINCT FROM sqlc.narg(parent_id)::uuid
+ORDER BY created_at ASC, id ASC;
+
+-- name: LockAgentTaskForManagedComment :one
+-- HTTP agent comments carrying a trusted source_task_id take this lock before
+-- CreateComment touches the issue row. Typed completion takes the same task
+-- lock first, so CLI-first and completion-first final delivery serialize with
+-- one lock order: task, then issue.
+SELECT * FROM agent_task_queue
+WHERE id = @task_id
+FOR UPDATE;
+
 -- name: HasAgentRepliedInThread :one
 -- Returns true if the given agent has posted a reply in the thread rooted at
 -- the specified parent comment. Used to detect agent participation in a

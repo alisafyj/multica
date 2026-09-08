@@ -74,6 +74,32 @@ remains the escape hatch for full payloads or resource types not covered by
 shortcuts. `project resource update` merges shortcut edits with the existing
 `resource_ref`, so a partial edit does not clobber required fields.
 
+Repository URLs must not contain HTTP credentials, passwords, query strings, or
+fragments. Use the authorized Git credential mechanism for authentication; SSH
+usernames such as `ssh://git@host/repo.git` remain supported.
+
+For a trusted `github_repo`, optional `resource_ref.setup` prepares dependencies
+before the agent starts. Supported steps are `go_mod_download` and
+`pnpm_install`; `timeout_seconds` is bounded to 1-900. This is not an arbitrary
+shell-command interface. Omit `step_directories` to run steps at the repository
+root. A monorepo can explicitly select a subdirectory for a declared step:
+
+```json
+{
+  "steps": ["go_mod_download", "pnpm_install"],
+  "timeout_seconds": 300,
+  "step_directories": { "pnpm_install": "web" }
+}
+```
+
+Directory values must be existing repository-relative directories, using `/`
+separators without traversal, symlinks, or `.git`/`.multica` segments. Do not
+send an empty or null map, or a key for a step not in `steps`. Preserve the rest
+of the resource when using the full JSON `--ref` payload. Read back saved
+resources, then inspect the next task's preparation result: saving a setup
+policy does not prove dependencies were installed. Setup failures stop before
+model execution.
+
 `--start-date` / `--due-date` are optional calendar days (`YYYY-MM-DD`, like
 issue dates). On `project update`, pass an empty string (`--start-date ""`) to
 clear a date; an unset flag leaves it untouched.

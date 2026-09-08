@@ -573,7 +573,7 @@ export function collectUnmappedModels(rows: readonly Priceable[]): string[] {
       uncosted.output > 0 ||
       uncosted.cacheRead > 0 ||
       uncosted.cacheWrite > 0;
-    if (!needsEstimate && (r.cost_usd_ticks ?? 0) > 0) continue;
+    if (!needsEstimate) continue;
     set.add(pricingKey(r.model, r.provider));
   }
   return Array.from(set).toSorted();
@@ -743,7 +743,11 @@ export interface TaskUsageSummary {
   /** input + output + cacheRead + cacheWrite, matching the usage page's headline. */
   tokens: number;
   cost: number;
+  /** Every consumed token has a reported cost or an available estimate. */
+  costComplete: boolean;
   cacheSavings: number;
+  /** Cache savings need rates even when the provider reported the cost. */
+  cacheSavingsComplete: boolean;
   input: number;
   output: number;
   cacheRead: number;
@@ -772,6 +776,7 @@ export function summarizeTaskUsage(
   const models: string[] = [];
   const summary: TaskUsageSummary = {
     tokens: 0, cost: 0, cacheSavings: 0,
+    costComplete: true, cacheSavingsComplete: true,
     input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
     models,
   };
@@ -783,6 +788,13 @@ export function summarizeTaskUsage(
     summary.cacheWrite += slice.cache_write_tokens;
     summary.cost += estimateCost(slice);
     summary.cacheSavings += estimateCacheSavings(slice);
+    if (!isModelPriced(slice.model, slice.provider)) {
+      const uncosted = uncostedTokens(slice);
+      if (Object.values(uncosted).some((tokens) => tokens > 0)) {
+        summary.costComplete = false;
+      }
+      if (slice.cache_read_tokens > 0) summary.cacheSavingsComplete = false;
+    }
     if (slice.model && !models.includes(slice.model)) models.push(slice.model);
   }
   summary.tokens =

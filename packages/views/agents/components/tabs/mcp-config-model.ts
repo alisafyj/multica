@@ -10,6 +10,11 @@ export type ManagedMcpServer = {
   enabled: boolean;
 };
 
+export type RuntimeMcpPolicy =
+  | { mode: "inherit"; allow: [] }
+  | { mode: "deny_all"; allow: [] }
+  | { mode: "allowlist"; allow: string[] };
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -92,4 +97,43 @@ export function removeManagedMcpServer(
   else delete document[server.container];
 
   return Object.keys(document).length > 0 ? document : null;
+}
+
+export function getRuntimeMcpPolicy(value: unknown): RuntimeMcpPolicy {
+  if (!isRecord(value)) return { mode: "inherit", allow: [] };
+  const multica = value._multica;
+  if (!isRecord(multica)) return { mode: "inherit", allow: [] };
+  const runtimeMcp = multica.runtimeMcp;
+  if (!isRecord(runtimeMcp)) return { mode: "inherit", allow: [] };
+
+  if (runtimeMcp.mode === "deny_all") return { mode: "deny_all", allow: [] };
+  if (runtimeMcp.mode !== "allowlist") return { mode: "inherit", allow: [] };
+
+  const allow = Array.isArray(runtimeMcp.allow)
+    ? Array.from(
+        new Set(
+          runtimeMcp.allow.filter(
+            (name): name is string => typeof name === "string" && name.length > 0,
+          ),
+        ),
+      )
+    : [];
+  return { mode: "allowlist", allow };
+}
+
+export function setRuntimeMcpPolicy(
+  value: unknown,
+  policy: RuntimeMcpPolicy,
+): Record<string, unknown> {
+  const document = isRecord(value) ? { ...value } : {};
+  const multica = isRecord(document._multica)
+    ? { ...document._multica }
+    : {};
+
+  multica.runtimeMcp =
+    policy.mode === "allowlist"
+      ? { mode: "allowlist", allow: Array.from(new Set(policy.allow)) }
+      : { mode: policy.mode };
+  document._multica = multica;
+  return document;
 }

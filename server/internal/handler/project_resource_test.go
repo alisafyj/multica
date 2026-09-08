@@ -247,6 +247,79 @@ func TestIsValidGitRepoURL(t *testing.T) {
 	}
 }
 
+func TestValidateGithubRepoRefConfigurationPolicyAndMCPServers(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  string
+		want string
+		err  bool
+	}{
+		{
+			name: "normalizes and preserves repository fields and setup",
+			ref:  `{"url":" https://github.com/acme/app.git ","ref":" release ","default_branch_hint":" main ","configuration_policy":"trusted","mcp_servers":[" docs ","build"],"setup":{"steps":["go_mod_download","pnpm_install"],"timeout_seconds":300,"step_directories":{"go_mod_download":"server","pnpm_install":"apps/web"}}}`,
+			want: `{"url":"https://github.com/acme/app.git","default_branch_hint":"main","ref":"release","configuration_policy":"trusted","mcp_servers":["docs","build"],"setup":{"steps":["go_mod_download","pnpm_install"],"timeout_seconds":300,"step_directories":{"go_mod_download":"server","pnpm_install":"apps/web"}}}`,
+		},
+		{
+			name: "absent policy stays absent and therefore restricted",
+			ref:  `{"url":"https://github.com/acme/app.git"}`,
+			want: `{"url":"https://github.com/acme/app.git"}`,
+		},
+		{
+			name: "setup accepts Unicode directory",
+			ref:  `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"前端/应用"}}}`,
+			want: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"前端/应用"}}}`,
+		},
+		{
+			name: "setup accepts directory at 512 UTF-8 bytes",
+			ref:  `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"` + strings.Repeat("a", 512) + `"}}}`,
+			want: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"` + strings.Repeat("a", 512) + `"}}}`,
+		},
+		{name: "unknown policy", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"automatic"}`, err: true},
+		{name: "duplicate server", ref: `{"url":"https://github.com/acme/app.git","mcp_servers":["docs"," docs "]}`, err: true},
+		{name: "blank server", ref: `{"url":"https://github.com/acme/app.git","mcp_servers":[" "]}`, err: true},
+		{name: "too many servers", ref: `{"url":"https://github.com/acme/app.git","mcp_servers":["` + strings.Repeat(`x","`, 64) + `x"]}`, err: true},
+		{name: "server name too long", ref: `{"url":"https://github.com/acme/app.git","mcp_servers":["` + strings.Repeat("x", 129) + `"]}`, err: true},
+		{name: "setup requires trusted policy", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"restricted","setup":{"steps":["go_mod_download"],"timeout_seconds":60}}`, err: true},
+		{name: "setup rejects unknown step", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["npm_install"],"timeout_seconds":60}}`, err: true},
+		{name: "setup rejects duplicate step", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install","pnpm_install"],"timeout_seconds":60}}`, err: true},
+		{name: "setup requires steps", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":[],"timeout_seconds":60}}`, err: true},
+		{name: "setup timeout too low", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":0}}`, err: true},
+		{name: "setup timeout too high", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":901}}`, err: true},
+		{name: "setup rejects command injection fields", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"command":"curl example.invalid"}}`, err: true},
+		{name: "setup rejects directory for undeclared step", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["go_mod_download"],"timeout_seconds":60,"step_directories":{"pnpm_install":"web"}}}`, err: true},
+		{name: "setup rejects unknown directory step", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"npm_install":"web"}}}`, err: true},
+		{name: "setup rejects empty directories", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{}}}`, err: true},
+		{name: "setup rejects null directories", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":null}}`, err: true},
+		{name: "setup rejects null directory value", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":null}}}`, err: true},
+		{name: "setup rejects non-string directory", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":42}}}`, err: true},
+		{name: "setup rejects blank directory", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":" "}}}`, err: true},
+		{name: "setup rejects untrimmed directory", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":" apps/web "}}}`, err: true},
+		{name: "setup rejects absolute directory", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"/web"}}}`, err: true},
+		{name: "setup rejects backslash", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps\\\\web"}}}`, err: true},
+		{name: "setup rejects control character", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps\u0000web"}}}`, err: true},
+		{name: "setup rejects colon", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps:web"}}}`, err: true},
+		{name: "setup rejects empty segment", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps//web"}}}`, err: true},
+		{name: "setup rejects untrimmed segment", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps/ web"}}}`, err: true},
+		{name: "setup rejects dot segment", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps/./web"}}}`, err: true},
+		{name: "setup rejects parent segment", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps/../web"}}}`, err: true},
+		{name: "setup rejects trailing dot segment", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps/web."}}}`, err: true},
+		{name: "setup rejects git segment case insensitively", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"apps/.GIT/hooks"}}}`, err: true},
+		{name: "setup rejects multica segment case insensitively", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":".MULTICA/cache"}}}`, err: true},
+		{name: "setup rejects directory over 512 UTF-8 bytes", ref: `{"url":"https://github.com/acme/app.git","configuration_policy":"trusted","setup":{"steps":["pnpm_install"],"timeout_seconds":60,"step_directories":{"pnpm_install":"` + strings.Repeat("界", 171) + `"}}}`, err: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := validateGithubRepoRef(json.RawMessage(tc.ref))
+			if (err != nil) != tc.err {
+				t.Fatalf("error = %v, want error=%v", err, tc.err)
+			}
+			if !tc.err && string(got) != tc.want {
+				t.Fatalf("normalized ref = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestProjectResourceLocalDirectoryLifecycle covers the full CRUD path for the
 // local_directory resource type added in MUL-2662. Unlike github_repo, the
 // ref schema requires local_path + daemon_id and forbids any path that isn't

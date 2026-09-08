@@ -9,6 +9,7 @@ import { renderWithI18n } from "../../test/i18n";
 const mockApi = vi.hoisted(() => ({
   cancelTask: vi.fn(),
   rerunIssue: vi.fn(),
+  listTaskRunEvidence: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", async (importOriginal) => {
@@ -19,6 +20,7 @@ vi.mock("@multica/core/api", async (importOriginal) => {
       ...original.api,
       cancelTask: mockApi.cancelTask,
       rerunIssue: mockApi.rerunIssue,
+      listTaskRunEvidence: mockApi.listTaskRunEvidence,
     },
   };
 });
@@ -357,7 +359,7 @@ describe("execution log failure reasons", () => {
   it("renders a failed run's reason in the active locale", () => {
     renderWithI18n(
       <QueryClientProvider client={failedLogClient()}>
-        <ExecutionLogSection issueId="issue-1" />
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
       </QueryClientProvider>,
       { locale: "zh-Hans" },
     );
@@ -369,6 +371,30 @@ describe("execution log failure reasons", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders configured run budget exhaustion without calling it account quota", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(issueKeys.tasks("issue-1"), [
+      makeTask({
+        status: "failed",
+        completed_at: "2026-06-08T08:04:00Z",
+        error: "configured execution budget exhausted",
+        failure_reason: "execution_budget_exceeded",
+      }),
+    ]);
+
+    renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show past runs (1)" }));
+    expect(screen.getByText(/Configured run budget exhausted/)).toBeInTheDocument();
+    expect(screen.queryByText(/Provider quota exhausted/)).not.toBeInTheDocument();
+  });
+
   // #7411: the raw `task.error` is English prose the server writes for logs
   // and classification. It used to be concatenated into the status tooltip,
   // which put untranslated text — and absolute worktree paths — in front of
@@ -377,7 +403,7 @@ describe("execution log failure reasons", () => {
   it("keeps the raw server error out of the status tooltip", () => {
     renderWithI18n(
       <QueryClientProvider client={failedLogClient()}>
-        <ExecutionLogSection issueId="issue-1" />
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
       </QueryClientProvider>,
       { locale: "zh-Hans" },
     );
@@ -387,6 +413,35 @@ describe("execution log failure reasons", () => {
       screen.queryByTitle(/provider returned 402/),
     ).not.toBeInTheDocument();
     expect(screen.getByTitle("提供商配额已用尽")).toBeInTheDocument();
+  });
+});
+
+describe("run evidence loading", () => {
+  it("fetches evidence only after the individual past run is expanded", async () => {
+    mockApi.listTaskRunEvidence.mockResolvedValue(null);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(issueKeys.tasks("issue-1"), [
+      makeTask({ status: "completed", completed_at: "2026-06-08T08:04:00Z" }),
+    ]);
+
+    renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
+      </QueryClientProvider>,
+    );
+
+    expect(mockApi.listTaskRunEvidence).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Show past runs (1)" }));
+    expect(mockApi.listTaskRunEvidence).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "View run evidence" }));
+      await Promise.resolve();
+    });
+    expect(mockApi.listTaskRunEvidence).toHaveBeenCalledTimes(1);
+    expect(mockApi.listTaskRunEvidence).toHaveBeenCalledWith("task-1");
   });
 });
 
@@ -443,7 +498,7 @@ describe("execution log header geometry", () => {
     queryClient.setQueryData(issueKeys.tasks("issue-1"), tasks);
     return renderWithI18n(
       <QueryClientProvider client={queryClient}>
-        <ExecutionLogSection issueId="issue-1" identifier="MUL-1" />
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" identifier="MUL-1" />
       </QueryClientProvider>,
     );
   }
@@ -512,7 +567,7 @@ describe("execution log header geometry", () => {
 
 describe("IssueUsageTotal pricing", () => {
   afterEach(() => {
-    useCustomPricingStore.setState({ pricings: {} });
+    act(() => useCustomPricingStore.setState({ pricings: {} }));
   });
 
   it("recomputes when a custom model rate is saved", () => {
@@ -533,7 +588,7 @@ describe("IssueUsageTotal pricing", () => {
     renderWithI18n(<IssueUsageTotal tasks={[task]} alone onOpen={() => {}} />);
 
     // No rate on file for this model yet.
-    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
 
     act(() => {
       useCustomPricingStore
@@ -548,5 +603,15 @@ describe("IssueUsageTotal pricing", () => {
 
     // 1M input tokens at $7/M, without any refetch.
     expect(screen.getByText("$7.00")).toBeInTheDocument();
+  });
+
+  it("marks a known subtotal as partial when another model is unpriced", () => {
+    renderWithI18n(
+      <IssueUsageTotal tasks={[makeTask({ status: "completed", usage: [
+        usageSlice(), usageSlice({ model: "r35-unpriced-model" }),
+      ] })]} alone onOpen={() => {}} />,
+    );
+    expect(screen.getByText("$2.00 (partial)")).toBeInTheDocument();
+    expect(screen.queryByText("$2.00")).not.toBeInTheDocument();
   });
 });

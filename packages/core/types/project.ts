@@ -83,6 +83,18 @@ export interface GithubRepoResourceRef {
   url: string;
   ref?: string;
   default_branch_hint?: string;
+  configuration_policy?: ProjectConfigurationPolicy;
+  mcp_servers?: string[];
+  setup?: RepositorySetup;
+}
+
+export type ProjectConfigurationPolicy = "restricted" | "trusted";
+export type RepositorySetupStep = "go_mod_download" | "pnpm_install";
+
+export interface RepositorySetup {
+  steps: RepositorySetupStep[];
+  timeout_seconds: number;
+  step_directories?: Partial<Record<RepositorySetupStep, string>>;
 }
 
 /**

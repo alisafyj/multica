@@ -317,6 +317,7 @@
     "import_button": "워크스페이스로 가져오기",
     "importing": "가져오는 중...",
     "skill_files_other": "파일 {{count}}개",
+    "skill_files_unavailable": "파일 사용 불가",
     "skill_name_label": "워크스페이스 스킬 이름",
     "skill_description_label": "설명",
     "skill_description_placeholder": "선택 사항 — 에이전트가 이 스킬을 언제 써야 하는지 설명하세요.",

@@ -963,13 +963,20 @@ func daemonStartupFailureError(logs daemonStartupLogs, waitErr error, profile, s
 	return errors.New(b.String())
 }
 
-// filterDaemonLogNoise drops DBG/INF log lines from an excerpt, keeping
+// filterDaemonLogNoise drops debug/info lines from tint or JSON excerpts, keeping
 // WRN/ERR entries and plain (non-slog) lines such as the final error the
 // child printed before exiting, capped to the last max lines.
 func filterDaemonLogNoise(lines []string, max int) []string {
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if strings.Contains(line, " DBG ") || strings.Contains(line, " INF ") {
+		var record struct {
+			Level string `json:"level"`
+		}
+		if json.Unmarshal([]byte(line), &record) == nil {
+			if record.Level == "DEBUG" || record.Level == "INFO" {
+				continue
+			}
+		} else if strings.Contains(line, " DBG ") || strings.Contains(line, " INF ") {
 			continue
 		}
 		out = append(out, line)

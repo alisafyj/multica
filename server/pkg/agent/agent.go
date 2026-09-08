@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/agentconfig"
 )
 
 // Backend is the unified interface for executing prompts via coding agents.
@@ -47,6 +49,9 @@ type ExecOptions struct {
 	MaxToolCalls              int
 	Timeout                   time.Duration
 	SemanticInactivityTimeout time.Duration
+	// InFlightToolTimeout bounds one continuously in-flight Codex tool. Zero
+	// preserves the backend's compatibility default of max(2h, semantic).
+	InFlightToolTimeout time.Duration
 	// FirstTurnNoProgressTimeout optionally overrides the Codex first-turn
 	// no-progress ceiling — the window a turn may stay completely silent after
 	// the app-server reports turn/started before the watchdog fails it. Zero
@@ -97,10 +102,23 @@ type ExecOptions struct {
 	// rest ignore it. Deliberately not enumerated here — the previous list
 	// went stale as backends were added, which is how MULTICA_QWENPAW_ARGS
 	// shipped plumbed but dropped. Grep for ExtraArgs to see today's set.
-	ExtraArgs        []string        // daemon-wide default CLI arguments appended before CustomArgs
-	CustomArgs       []string        // per-agent CLI arguments appended after ExtraArgs
-	QwenpawWorkspace string          // per-task QwenPaw workspace directory (passed as --workspace to qwenpaw acp); empty when not applicable
-	McpConfig        json.RawMessage // if non-nil, MCP server config to pass via --mcp-config
+	ExtraArgs  []string // daemon-wide default CLI arguments appended before CustomArgs
+	CustomArgs []string // per-agent CLI arguments appended after ExtraArgs
+	// CodexTaskWritableRoots contains daemon-validated task-private build/store
+	// cache leaves. Only an effective never + legacy workspace-write policy uses
+	// them; inherited user roots and other sandbox settings remain unchanged.
+	CodexTaskWritableRoots []string
+	// Selections come from task intent; bindings come from the private environment.
+	// The Codex backend requires an exact match before applying selected controls.
+	CodexPluginSkillSelections []CodexPluginSkillSelection
+	CodexPluginSkillBindings   []CodexPluginSkillBinding
+	codexPluginSkills          *codexPluginSkillPolicy
+	QwenpawWorkspace           string          // per-task QwenPaw workspace directory (passed as --workspace to qwenpaw acp); empty when not applicable
+	McpConfig                  json.RawMessage // if non-nil, MCP server config to pass via --mcp-config
+	// RuntimeMCPSelection is separate from the rendered MCP overlays. Nil and
+	// inherit preserve legacy behavior; names never carry local connection data.
+	RuntimeMCPSelection *agentconfig.RuntimeMCPSelection
+	codexPluginMCP      *codexPluginMCPPlan
 	// ThinkingLevel is the runtime-native reasoning/effort value (e.g.
 	// Claude's "low|medium|high|xhigh|max", Codex's "none|minimal|low|
 	// medium|high|xhigh", OpenCode's model variant names). Empty means
@@ -132,6 +150,19 @@ type ExecOptions struct {
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
 	ClaudeSettingsPath string
+	// ProjectConfigurationPolicy is explicit task authorization for native
+	// repository settings/hooks. Empty preserves legacy launch behavior.
+	// It is independent of MCP selection and does not grant runtime credentials.
+	ProjectConfigurationPolicy string
+	// ValidateResolvedModelSelection validates the effective model reported by a
+	// runtime-native configuration read before the first thread starts. It is
+	// optional and currently consumed only by Codex for empty-model task
+	// selections whose capability overrides cannot be validated earlier.
+	ValidateResolvedModelSelection func(model string) error
+	// RequestUserInput bridges provider-native, non-secret blocking questions to
+	// the Multica UI. Nil preserves each backend's legacy non-interactive
+	// behavior. The callback remains bounded by the execution context.
+	RequestUserInput func(context.Context, PendingInputRequest) (PendingInputAnswer, error)
 }
 
 // runContext derives the execution context for an agent subprocess from the
@@ -213,6 +244,15 @@ type Result struct {
 	DurationMs int64
 	SessionID  string
 	Usage      map[string]TokenUsage // keyed by model name
+	// ExecutionEvidence preserves nullable provider observations for benchmark
+	// telemetry. Legacy Usage remains the compatibility accounting surface.
+	ExecutionEvidence *ExecutionEvidence
+	// ExecutionBudgetExceeded is structured evidence that a failed run reached
+	// its configured spending cap, not that the provider account lacks credit.
+	ExecutionBudgetExceeded bool
+	// RuntimeMCPSelectionFailed is a local, pre-thread configuration failure,
+	// not a provider error. The daemon classifies it without parsing Error text.
+	RuntimeMCPSelectionFailed bool
 	// ResumeRejected is positive evidence that this run's requested resume
 	// was permanently refused — the transcript is gone, the session belongs to
 	// another provider account, OR the session still exists but its history
@@ -272,6 +312,10 @@ type Config struct {
 	RuntimeID      string
 	DaemonVersion  string
 	CodexVersion   string
+	// CodexResponseMetadata enables the pinned, provider-response metadata
+	// projection for an authorized built-in Codex runtime. The backend still
+	// validates BuiltinRuntime and the resolved CLIVersion before enabling it.
+	CodexResponseMetadata bool
 	// BuiltinRuntime reports that ExecutablePath is the provider's own
 	// discovered binary rather than a custom runtime profile's command. A
 	// custom profile keeps its protocol family as the provider, so the

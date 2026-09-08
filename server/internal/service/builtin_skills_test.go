@@ -490,6 +490,10 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"multica issue runs <issue-id> --siblings --output json",
 				"capped at 20",
 				"Nothing here reserves an issue or serialises anything",
+				// Feature contracts retained through the consolidated layout.
+				"MULTICA_ISSUE_OUTCOME_FILE",
+				"custom terminal status can still",
+				"successful process exit alone does not establish review readiness",
 				// #8008: the read path for typed properties. The flag, the
 				// per-item names and the promise that the stored ids stay
 				// beside them are each what a script joins on.
@@ -554,6 +558,11 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"multica agent skills list <agent-id> --output json",
 				"multica agent get <agent-id> --output json",
 				"255",
+				// Runtime-local MCP and plugin-skill selection are agent contracts.
+				"_multica.runtimeMcp",
+				"allowlist` fails closed",
+				"runtime-mcp-selection-v1",
+				"At most 128 plugin skills may be disabled",
 			},
 			notWant: []string{
 				"--from-template",
@@ -623,6 +632,10 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				// metadata; every other runtime gets a linked worktree.
 				"Linux and Windows Codex",
 				"task-local Git metadata",
+				// Prepared primary checkouts survive same-session continuation.
+				"one unambiguous authorized primary repository",
+				"returns the existing checkout without fetching or resetting it",
+				"Same-session continuation preserves the primary checkout",
 			},
 		},
 		{
@@ -637,6 +650,11 @@ func TestPlatformSkillCoversPlatformContracts(t *testing.T) {
 				"Project resources are durable and affect future tasks",
 				"github_repo.resource_ref.url",
 				"resource_ref.ref",
+				// Trusted dependency preparation is declarative and verified later.
+				"resource_ref.setup",
+				"go_mod_download",
+				"step_directories",
+				"saving a setup policy does not prove dependencies were installed",
 			},
 		},
 		{
@@ -905,6 +923,8 @@ func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
 		// Execution is a separate skill; the case document declares what it needs.
 		"multica-running-tests",
 		"required_capabilities",
+		"capability discovery",
+		"Creating or editing a case is not evidence that it ran or passed",
 		// Generation workflow: propose command and three kind values.
 		"testcase propose",
 		"obsolete",
@@ -916,12 +936,22 @@ func TestTestCasesSkillCoversTheDataContract(t *testing.T) {
 			t.Errorf("multica-test-cases skill must state %q", want)
 		}
 	}
+	if !strings.Contains(fm["description"], "multica-running-tests") {
+		t.Error("test-case discovery summary must route execution to multica-running-tests")
+	}
+	for _, stale := range []string{"does not exist yet", "There is no `multica test`", "no run or result recording", "nothing consumes it"} {
+		if strings.Contains(skill.Content, stale) {
+			t.Errorf("test-case skill denies an existing execution capability: %q", stale)
+		}
+	}
 
 	// Owned by the runtime brief or by other skills — duplicating them here
 	// makes the two copies drift.
 	mustNotContain := []string{
 		"multica repo checkout <url> [--ref",
 		"multica issue create",
+		"multica test result set",
+		"multica test evidence add",
 	}
 	for _, unwanted := range mustNotContain {
 		if strings.Contains(body, unwanted) {
@@ -945,8 +975,7 @@ func TestRunningTestsSkillCoversExecutionContract(t *testing.T) {
 		t.Errorf("allowed-tools = %q, want access to the Multica CLI", got)
 	}
 
-	// Contract anchors — exact file:line citations live in the skill's
-	// references/running-tests-source-map.md, so a line shift cannot rot this test.
+	// Contract anchors only, never wording: the skill is prose the CLI must keep true.
 	mustContain := []string{
 		// Capability discovery is the mandatory first step.
 		"multica test capability list --run <run-id> --output json",

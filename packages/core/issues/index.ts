@@ -7,6 +7,8 @@ export * from "./design-role";
 export * from "./workdir";
 export * from "./config";
 export * from "./stores";
+export * from "./use-task-run-evidence";
+export * from "./use-pending-inputs";
 
 export {
   issueBehavesAs,

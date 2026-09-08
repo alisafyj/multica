@@ -76,7 +76,7 @@ func TestEnsureCodexDisabledSkillsConfig(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("model = \"gpt-5\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureCodexDisabledSkillsConfig(configPath, root, []RuntimeSkillRefForEnv{
+	if _, err := ensureCodexDisabledSkillsConfig(configPath, root, []RuntimeSkillRefForEnv{
 		{Root: "provider", Key: "review"},
 		{Root: "universal", Key: "shared/release"},
 		{Root: "provider", Key: "../escape"},
@@ -116,7 +116,7 @@ func TestRuntimeSkillPoliciesYieldToWorkspaceSkills(t *testing.T) {
 	}
 
 	configPath := filepath.Join(root, "config.toml")
-	if err := ensureCodexDisabledSkillsConfig(configPath, root, []RuntimeSkillRefForEnv{
+	if _, err := ensureCodexDisabledSkillsConfig(configPath, root, []RuntimeSkillRefForEnv{
 		{Root: "provider", Key: "review"},
 	}, workspaceSkills); err != nil {
 		t.Fatalf("ensureCodexDisabledSkillsConfig: %v", err)

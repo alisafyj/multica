@@ -146,6 +146,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"sso_authorization_code":             workspaceDeleteKeep,
 	"sys_cron_executions":                workspaceDeleteKeep,
 	"task_message":                       workspaceDelete,
+	"task_run_evidence":                  workspaceDelete,
+	"task_pending_input":                 workspaceDelete,
 	"task_token":                         workspaceDelete,
 	"task_usage":                         workspaceDelete,
 	"task_usage_hourly":                  workspaceDelete,
