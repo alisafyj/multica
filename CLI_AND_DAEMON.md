@@ -247,10 +247,12 @@ Daemon behavior is configured via flags or environment variables:
 | Setting | Flag | Env Variable | Default |
 |---------|------|--------------|---------|
 | Poll interval | `--poll-interval` | `MULTICA_DAEMON_POLL_INTERVAL` | `30s` (catch-up fallback; WebSocket wake signals deliver work sooner) |
+| Healthy WebSocket claim poll upper bound | `--ws-claim-poll-interval` | `MULTICA_DAEMON_WS_CLAIM_POLL_INTERVAL` | `3m` (configured independently of `--poll-interval`; downward jitter makes the normal interval `2m30s`–`2m45s`, while old servers and uncertain claims retain the ordinary poll interval) |
 | Heartbeat interval | `--heartbeat-interval` | `MULTICA_DAEMON_HEARTBEAT_INTERVAL` | `15s` |
 | Agent timeout | `--agent-timeout` | `MULTICA_AGENT_TIMEOUT` | `0` (no cap; bounded by the watchdogs) |
 | Agent idle watchdog | — | `MULTICA_AGENT_IDLE_WATCHDOG` | `2h` (`0` disables the whole watchdog suite) |
 | Agent tool watchdog | — | `MULTICA_AGENT_TOOL_WATCHDOG` | same as the idle watchdog (`0` = never force-stop during a tool call) |
+| Concise execution optimization | — | `MULTICA_CONCISE_OPTIMIZATION` | `false` (opt-in guidance for task-level concise operational runs only) |
 | Codex semantic inactivity timeout | `--codex-semantic-inactivity-timeout` | `MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT` | same as the idle watchdog (Codex's timer is not tool-aware, so it tracks the larger of the idle / tool budgets) |
 | Codex first-turn no-progress timeout | — | `MULTICA_CODEX_FIRST_TURN_TIMEOUT` | `0` (keeps the built-in `60s` ceiling) |
 | Codex handshake timeout | `--codex-handshake-timeout` | `MULTICA_CODEX_HANDSHAKE_TIMEOUT` | `30s`; `thread/start` and `thread/resume`: `60s` (an explicit value overrides both budgets globally) |
@@ -272,6 +274,24 @@ Daemon behavior is configured via flags or environment variables:
 | GC Hermes memory TTL (per-agent `memories/`) | — | `MULTICA_GC_HERMES_MEMORY_TTL` | `2160h` (90d; set `0` to disable) |
 | GC Hermes session TTL (per-conversation `state.db`) | — | `MULTICA_GC_HERMES_SESSION_TTL` | `336h` (14d; set `0` to disable) |
 | GC task temp legacy TTL (pre-lock `multica-task-*`) | — | `MULTICA_GC_TASK_TEMP_LEGACY_TTL` | `0` (disabled; set a duration to opt in) |
+
+#### Concise execution optimization
+
+Set `MULTICA_CONCISE_OPTIMIZATION=true` in the **daemon process environment**, then restart the daemon when safe. The existing task-level **Concise agent mode** checkbox selects which runs receive the optimization. Setting a variable only on an agent subprocess does not configure its parent daemon. Set `false` (the default) and restart to disable it for subsequent runs. This is an operator switch, not a second UI checkbox; changing it does not rewrite an already-running session.
+
+The optimization adds complexity-aware execution guidance: handle small known scopes inline, delegate only substantive independent slices, read related history only for a concrete gap, and bound tool preparation to one inspection plus at most one specifically authorized correction/recheck. Explicitly requested planning, parallelism, repository checks, privacy boundaries, and acceptance tests still apply. These are agent instructions, not hard enforcement or a promised reduction in latency. Existing turn/tool-call caps are unchanged.
+
+Normal runs, specialized raw task payloads, and the legacy daemon-wide `MULTICA_DIRECT_AGENT_MODE` escape hatch keep their existing prompts. The latter takes precedence even if the task selected concise mode. Initial execution and fresh-session fallback both receive the same optimization setting. Existing comparison telemetry does not record this new switch, so record its value separately when evaluating paired runs; do not mix unknown configurations into a controlled comparison.
+
+When GitNexus is actually required, the optimized prompt names a local readiness inspector:
+
+```bash
+multica repo tool-status gitnexus --path ./checkout --output json
+```
+
+It resolves the requested checkout and runs the installed `gitnexus status --json` once, with a 10-second execution deadline and a 64 KiB stdout limit (bounded process-tree cleanup can take additional time). It never downloads tools, runs analysis, initializes indexes, or creates a Multica index cache. GitNexus may maintain its own runtime identity cache. Its existing index is reusable only when its supported structured receipt confirms matching repository/revision, current analyzer identity, complete indexing, and measured current content. A same-commit working-tree edit invalidates readiness through the content-drift verdict; this is not a cache keyed only by HEAD.
+
+The JSON result contains `schema_version`, `tool`, `repository`, `status`, and a stable `reason`. Status is `ready`, `stale`, `not_indexed`, `unavailable`, `unsupported`, or `failed`. All are successful inspection responses (exit 0); automation must check `status == "ready"`, not just the exit code. Invalid arguments or an invalid checkout exit nonzero. Unsupported/older GitNexus versions, missing evidence, output overflow, and timeouts never imply readiness. Arbitrary subprocess output and foreign repository paths are not forwarded. Repair remains a separate task-authorized action; unavailable mandatory checks must be reported, not silently bypassed.
 
 #### Workspace garbage collection
 
@@ -502,9 +522,13 @@ multica issue list --full-id
 multica issue list --limit 20 --output json
 multica issue list --status todo --sort position       # board order (the default)
 multica issue list --sort created_at --direction desc  # newest first
+multica issue list --output json --fields=id,title,status,priority  # narrow the JSON payload
+multica issue list --output json --resolve-properties  # property names beside the ids
 ```
 
 Table output shows a routable issue `KEY` such as `MUL-123`; copy that key into follow-up commands like `issue get`, `issue comment list`, `issue status`, or `--parent`. Add `--full-id` when you need canonical UUIDs. Available filters: `--status`, `--priority`, `--assignee` / `--assignee-id`, `--project`, `--metadata`, `--property`, `--limit`. Use `--assignee-id <uuid>` for unambiguous filtering when names overlap.
+
+`--fields` (JSON output only) whitelists which top-level issue keys come back — pass a comma-separated list such as `--fields=id,title,status,priority`. Omit it for the full issue object, unchanged from before this flag existed. Filtering happens client-side after the CLI fetches the full response, so this shrinks CLI output size and agent context cost — not network transfer or server-side work. Field names are the real API keys, not table-display labels — assignee is `assignee_type`/`assignee_id` rather than a single `assignee` field. An unknown name is rejected up front with the valid list rather than silently dropped. Has no effect on `--output table`.
 
 Results come back in board order (`position`, ascending) by default. Pass `--sort` to change the column (`position`, `title`, `created_at`, `start_date`, `due_date`, `priority`, or `property:<name-or-id>` for a custom property — select properties order by option order, and issues without the property sort last) and `--direction asc|desc` to flip the order. `position` is always ascending (it is the manual drag order), so `--direction` is rejected when `--sort` is `position` or omitted — use it only with `title`, `created_at`, `start_date`, `due_date`, `priority`, or a `property:` sort.
 
@@ -523,11 +547,18 @@ multica issue list --property "Impact=__none__" --status in_review
 multica issue list --property "Score=42" --property "Ship Date=2026-08-28"
 ```
 
+In JSON output, `properties` is a map from definition id to the stored value: an option id for `select`, a list of option ids for `multi_select`, a `member:<uuid>` reference for the actor types, and the value itself otherwise. Pass `--resolve-properties` to replace that map with the rows `issue property list` prints, one per set property, in catalog order: `property_id`, `name`, `type`, the stored `value`, a human `display`, `display_values` (the per-item names of a `multi_select` or `multi_actor` value) and `archived` when the definition is archived. Archived definitions still resolve, since their values stay on the issue. An option that is no longer in the definition, or a member who has left the workspace, keeps its raw id in `display`. The flag adds at most two requests: the catalog, shared with `--property` and `--sort property:`, and the member list, fetched only when an actor `--property` filter or an actor value on the page needs it and shared between the two. If either request fails the command fails rather than printing ids. In JSON output it combines with `--fields` only when that list keeps `properties`; a `--fields` list without it is rejected rather than resolving a key the same command would delete. The flag has no effect on `--output table`, where it and `--fields` are both ignored and neither is rejected.
+
+```bash
+multica issue list --output json --resolve-properties | jq '.issues[] | {identifier, properties: [.properties[]? | {name, display}]}'
+```
+
 ### Get Issue
 
 ```bash
 multica issue get <id>
 multica issue get <id> --output json
+multica issue get <id> --resolve-properties   # property names beside the ids, as in issue list
 ```
 
 ### Create Issue
@@ -897,6 +928,19 @@ multica autopilot delete <id>
 ```bash
 multica autopilot trigger <id>            # Fires the autopilot once, returns the run
 ```
+
+The command exits non-zero unless the run actually started (`issue_created` or
+`running`). A `skipped` run — admission refused, runtime offline, quota
+exhausted, a duplicate already in flight — dispatched nothing; its
+`failure_reason` and `reason_code` are printed to stderr, and `--output json`
+still writes the full run to stdout first.
+
+Run as an agent (inside a task, or over A2A), the trigger is authorized as the
+human that run acts for, not as the owner of the machine it executes on. That
+human needs exactly the write access they would need to trigger it themselves —
+and it is the only access checked: the machine's owner needs no grant on the
+autopilot, only workspace membership. A run carrying no originator cannot
+trigger at all, and says so rather than failing generically.
 
 ### Run History
 

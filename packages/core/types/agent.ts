@@ -77,6 +77,8 @@ export interface RuntimeDevice {
   owner_id: string | null;
   /** Defaults to "private" when the backend predates the visibility flag. */
   visibility: RuntimeVisibility;
+  /** M4: designated test host; device rounds may bind to its hub's phones. Defaults to false on older backends. */
+  test_host_enabled?: boolean;
   /**
    * The custom runtime profile this registered runtime was launched from,
    * or `null` for a built-in protocol family. The UI uses this to stamp a
@@ -277,6 +279,27 @@ export interface TaskAttribution {
   rerun_of_task_id?: string;
 }
 
+/** Daemon-observed execution snapshot, never reconstructed from current settings. */
+export interface TaskExecutionMetrics {
+  schema_version: 1;
+  provider: string;
+  requested_model: string;
+  daemon_version: string;
+  daemon_commit: string;
+  community_base_version: string;
+  direct_agent_mode: boolean;
+  concise_mode: boolean;
+  started_at: string;
+  finished_at?: string;
+  phases: Array<{
+    name: "prepare" | "execute" | "finalize";
+    started_at: string;
+    duration_ms: number;
+    status: "running" | "completed" | "failed" | "cancelled";
+  }>;
+  tool_calls?: number;
+}
+
 export interface AgentTask {
   id: string;
   agent_id: string;
@@ -418,8 +441,8 @@ export interface AgentTask {
   attribution?: TaskAttribution;
   /**
    * This run's own token consumption, one entry per (provider, model) it used.
-   * Present on the issue execution-log endpoint only; the daemon claim path
-   * omits it.
+   * Present on issue execution logs and explicit agent-history accounting
+   * requests; normal UI history and daemon claims omit it.
    *
    * `undefined` (old backend, or a surface that doesn't hydrate it) and `[]`
    * (backend hydrated, this run has no recorded usage) both mean "no number to
@@ -427,6 +450,8 @@ export interface AgentTask {
    * reporting was not free, we just don't know what it cost.
    */
   usage?: TaskUsage[];
+  /** Missing on historical runs and when optional telemetry is malformed. */
+  execution_metrics?: TaskExecutionMetrics;
 }
 
 /**
@@ -481,6 +506,8 @@ export interface Agent {
   quick_create_supported?: boolean;
   /** Server-attested capability for explicit quick-create priority and due date fields. */
   quick_create_fields_supported?: boolean;
+  /** Privacy-safe coarse liveness for a runtime hidden from the runtime list. */
+  runtime_availability?: "online" | "unstable" | "offline";
   name: string;
   description: string;
   /** What this agent's owner wrote. For a system agent this holds only the

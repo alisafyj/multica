@@ -543,14 +543,13 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		if taskID := r.FormValue("task_id"); taskID != "" {
 			// Authoritative task-token boundary (load-bearing, mirrors
 			// chat_history.go:chatHistorySession). X-Task-ID is only trustworthy
-			// when the auth middleware set it from a task-scoped `mat_` token —
-			// that path is also the ONLY one that stamps X-Actor-Source=task_token
-			// and strips a client-forged X-Task-ID. A normal JWT / `mul_` PAT
-			// leaves X-Actor-Source empty and does NOT strip a forged X-Task-ID,
-			// and resolveActor's fallback will accept a real X-Agent-ID +
-			// X-Task-ID pair. So without this gate a member who learns a task ID
-			// could forge both headers and inject an attachment onto another chat
-			// task's assistant reply — a cross-session/privacy leak.
+			// when the auth middleware set it from a task-scoped `mat_` token:
+			// that is the only branch that stamps it, because the middleware
+			// deletes any client-supplied agent/task identity first (MUL-3428).
+			// The gate is kept explicit because of what it protects — an
+			// attachment injected onto another chat task's assistant reply is a
+			// cross-session privacy leak, and this endpoint should say which
+			// credential it requires rather than rely on a distant strip.
 			if r.Header.Get("X-Actor-Source") != "task_token" {
 				writeError(w, http.StatusForbidden, "task_id upload is only available from within an agent task")
 				return
@@ -630,27 +629,34 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			// Load the test_run by agent_task_id to validate the uploader.
-			run, err := h.Queries.GetTestRunByAgentTask(r.Context(), db.GetTestRunByAgentTaskParams{
-				AgentTaskID: taskUUID,
+			// The run-case names its run; the task token must be the task that
+			// owns the work — the round's task, or (per-case dispatch, TS-021)
+			// the task that executes exactly this case.
+			runCase, err := h.Queries.GetTestRunCaseInWorkspace(r.Context(), db.GetTestRunCaseInWorkspaceParams{
+				ID:          caseUUID,
 				WorkspaceID: parseUUID(workspaceID),
 			})
 			if err != nil {
+				writeError(w, http.StatusForbidden, "invalid test_run_case_id")
+				return
+			}
+			run, err := h.Queries.GetTestRunInWorkspace(r.Context(), db.GetTestRunInWorkspaceParams{
+				ID:          runCase.RunID,
+				WorkspaceID: parseUUID(workspaceID),
+			})
+			if err != nil {
+				writeError(w, http.StatusForbidden, "invalid test_run_case_id for this run")
+				return
+			}
+			ownsRun := run.AgentTaskID.Valid && uuidToString(run.AgentTaskID) == uuidToString(taskUUID)
+			ownsCase := runCase.AgentTaskID.Valid && uuidToString(runCase.AgentTaskID) == uuidToString(taskUUID)
+			if !ownsRun && !ownsCase {
 				writeError(w, http.StatusForbidden, "invalid task token for test_run")
 				return
 			}
 			// Gate 3: the uploader must be the run's executor agent.
 			if uploaderType != "agent" || !run.ExecutorID.Valid || uuidToString(run.ExecutorID) != uploaderID {
 				writeError(w, http.StatusForbidden, "test_run_case_id upload requires the run's own agent")
-				return
-			}
-			// Validate the run-case belongs to this test_run.
-			runCase, err := h.Queries.GetTestRunCaseInWorkspace(r.Context(), db.GetTestRunCaseInWorkspaceParams{
-				ID:          caseUUID,
-				WorkspaceID: parseUUID(workspaceID),
-			})
-			if err != nil || uuidToString(runCase.RunID) != uuidToString(run.ID) {
-				writeError(w, http.StatusForbidden, "invalid test_run_case_id for this run")
 				return
 			}
 			pendingRunCase = &pendingRunCaseState{
@@ -1661,7 +1667,16 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.deleteS3Object(r.Context(), att.Url)
+	// A defect's evidence copy shares the stored object with the run case's
+	// original row (CreateAttachmentCopyForIssue); the object goes only when
+	// the last row pointing at it is gone.
+	if shared, err := h.Queries.CountAttachmentsSharingURL(r.Context(), db.CountAttachmentsSharingURLParams{Url: att.Url, WorkspaceID: att.WorkspaceID}); err != nil || shared > 0 {
+		if err != nil {
+			slog.Warn("delete attachment: shared-object check failed; keeping the object", "attachment_id", uuidToString(att.ID), "error", err)
+		}
+	} else {
+		h.deleteS3Object(r.Context(), att.Url)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

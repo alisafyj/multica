@@ -198,9 +198,6 @@ func renderLegacyBriefForCompactSelectorTest(provider string, ctx TaskContextFor
 		writeRepositories(&b, ctx)
 	}
 	writeProjectContext(&b, ctx)
-	if kind.hasIssueContext() {
-		writeIssueMetadata(&b)
-	}
 	if kind == kindIssue {
 		writeInstructionPrecedence(&b)
 	}
@@ -211,7 +208,7 @@ func renderLegacyBriefForCompactSelectorTest(provider string, ctx TaskContextFor
 	case kindQuickCreate:
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:
-		writeWorkflowAutopilot(&b, ctx)
+		writeWorkflowAutopilot(&b)
 	case kindUIDraftCreate:
 		writeWorkflowUIDraftCreate(&b)
 	case kindDesignRestore:
@@ -224,7 +221,7 @@ func renderLegacyBriefForCompactSelectorTest(provider string, ctx TaskContextFor
 		writeWorkflowIssue(&b, ctx)
 	}
 	if kind.hasIssueContext() && ctx.IssueID != "" {
-		writeSubIssueCreation(&b)
+		writeSubIssueCreation(&b, ctx)
 	}
 	writeSkills(&b, ctx)
 	if kind == kindIssue {

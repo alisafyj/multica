@@ -5,6 +5,7 @@ import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 import type {
   ManualUpdateCheckResult,
   UpdaterPreferences,
+  UpdaterState,
 } from "../shared/updater-types";
 import {
   RENDERER_ROUTE_CONTEXT_CHANNEL,
@@ -26,7 +27,10 @@ import type {
 } from "../shared/daemon-types";
 import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
+  parseTabSelectionShortcutKey,
+  TAB_SELECTION_SHORTCUT_CHANNEL,
   type MainRendererMessageChannel,
+  type TabSelectionShortcutKey,
 } from "../shared/main-renderer-messages";
 
 // Synchronously fetch app metadata from main at preload time so the renderer
@@ -240,6 +244,18 @@ const desktopAPI = {
    *  an issue window, because Settings is a tab. Returns an unsubscribe fn. */
   onOpenSettings: (callback: () => void) =>
     subscribeToMainRendererChannel("settings:open", () => callback()),
+  /** Listen for fixed Cmd/Ctrl+1..9 tab-selection requests. Only the main
+   *  window subscribes; main routes requests there from any focused window. */
+  onSelectTabShortcut: (
+    callback: (key: TabSelectionShortcutKey) => void,
+  ) =>
+    subscribeToMainRendererChannel<unknown>(
+      TAB_SELECTION_SHORTCUT_CHANNEL,
+      (payload) => {
+        const key = parseTabSelectionShortcutKey(payload);
+        if (key !== null) callback(key);
+      },
+    ),
   /** Ask the main process to close the window (used after closing the last tab). */
   closeWindow: () => ipcRenderer.send("window:close"),
   /** Open a validated issue-detail route in a dedicated native window. */
@@ -304,6 +320,12 @@ const daemonAPI = {
 };
 
 const updaterAPI = {
+  getState: (): Promise<UpdaterState> => ipcRenderer.invoke("updater:get-state"),
+  onStateChange: (callback: (state: UpdaterState) => void) => {
+    const handler = (_: unknown, state: UpdaterState) => callback(state);
+    ipcRenderer.on("updater:state", handler);
+    return () => ipcRenderer.removeListener("updater:state", handler);
+  },
   onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => {
     const handler = (_: unknown, info: { version: string; releaseNotes?: string }) => callback(info);
     ipcRenderer.on("updater:update-available", handler);

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -79,9 +80,9 @@ func (h *Handler) GetChatChannelHistory(w http.ResponseWriter, r *http.Request) 
 
 // chatMessageHistory reads a chat session's own stored transcript (chat_message)
 // as a channel.HistoryPage, oldest-first, honoring the shared ?limit / ?before
-// paging contract. It backs `multica chat history` for sessions with no IM
-// channel (web chat, Feishu, WeCom, DingTalk), whose history lives only in
-// Multica — there is no platform to read back. It pages through the same
+// paging contract. It backs `multica chat history` for sessions with no native
+// channel overview reader (web chat, Feishu, WeCom, DingTalk). Feishu's source
+// topic messages are separately available through `chat thread`. It uses the same
 // (created_at, id) cursor the frontend's message list uses, so an agent can walk
 // a long session back without re-reading the recent window each time.
 func (h *Handler) chatMessageHistory(r *http.Request, scope chatHistoryScope) (channel.HistoryPage, error) {
@@ -197,11 +198,20 @@ func transcriptAuthor(role channel.HistoryRole) string {
 
 // GetChatThread serves `multica chat thread [id]` — one thread's messages. With
 // ?id it reads that specific thread; without, the thread the session is in. The
-// channel stays server-pinned to the session, so the id is only a within-channel
-// locator.
+// channel stays server-pinned to the session. Slack accepts a within-channel
+// locator; Feishu reads only the task's immutable bound topic.
 func (h *Handler) GetChatThread(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.chatHistorySession(w, r)
 	if !ok {
+		return
+	}
+	binding, err := h.Queries.GetChannelChatSessionBindingBySessionAny(r.Context(), scope.sessionID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		h.respondChatHistory(w, r, scope.sessionID, channel.HistoryPage{}, fmt.Errorf("%w: %w", errChannelBindingRead, err))
+		return
+	}
+	if err == nil && binding.ChannelType == "feishu" {
+		h.getFeishuChatThread(w, r, scope, binding)
 		return
 	}
 	if h.SlackHistory == nil {
@@ -213,12 +223,70 @@ func (h *Handler) GetChatThread(w http.ResponseWriter, r *http.Request) {
 	h.respondChatHistory(w, r, scope.sessionID, page, err)
 }
 
+// Feishu topic reads share the PRD source authority: immutable task delivery,
+// current context, installation, agent and workspace, never caller-supplied
+// room credentials. The transcript overview remains a stored-session read.
+func (h *Handler) getFeishuChatThread(w http.ResponseWriter, r *http.Request, history chatHistoryScope, binding db.ChannelChatSessionBinding) {
+	scope, ok := h.chatPRDScope(w, r)
+	if !ok {
+		return
+	}
+	if id := r.URL.Query().Get("id"); id != "" && id != scope.threadID {
+		writeError(w, http.StatusForbidden, "chat history is only available for this task's Feishu topic")
+		return
+	}
+	opts := history.historyOptions(r)
+	if !history.contextRevision.Valid {
+		opts.ContextRevision = binding.ContextRevision
+		opts.After = binding.HistoryStartMessageID.String
+		opts.Until = binding.HistoryEndMessageID.String
+	}
+	opts.BoundaryPending = opts.BoundaryPending || binding.HistoryBoundaryPending
+	page, err := lark.ReadThreadHistory(r.Context(), h.LarkAPIClient, scope.credentials, scope.chatID, scope.threadID, scope.botOpenID, opts)
+	if err == nil && opts.ContextRevision > 1 {
+		// Provider time alone cannot exclude a delayed reply from an old task.
+		// Match Slack's generation provenance rule for this app's own messages.
+		var candidates []string
+		for _, message := range page.Messages {
+			if message.Role == channel.HistoryRoleAssistant {
+				candidates = append(candidates, message.ID)
+			}
+		}
+		if len(candidates) > 0 {
+			var ids []string
+			ids, err = h.Queries.ListChannelOutboundMessageIDsForContext(r.Context(), db.ListChannelOutboundMessageIDsForContextParams{
+				ChatSessionID: history.sessionID, InstallationID: scope.installationID,
+				ChannelType:            pgtype.Text{String: "feishu", Valid: true},
+				ChannelChatID:          pgtype.Text{String: scope.chatID + ":" + scope.threadID, Valid: true},
+				ChannelContextRevision: pgtype.Int8{Int64: opts.ContextRevision, Valid: true},
+				CandidateMessageIds:    candidates,
+			})
+			allowed := make(map[string]struct{}, len(ids))
+			for _, id := range ids {
+				allowed[id] = struct{}{}
+			}
+			messages := page.Messages[:0]
+			for _, message := range page.Messages {
+				if _, known := allowed[message.ID]; message.Role != channel.HistoryRoleAssistant || known {
+					messages = append(messages, message)
+				}
+			}
+			page.Messages = messages
+		}
+	}
+	h.respondChatHistory(w, r, history.sessionID, page, err)
+}
+
 // chatHistorySession authorizes the request and returns the caller's own chat
-// session. It is authorized by the task-scoped token alone: middleware stamps
-// the token's task into X-Actor-Source=task_token + X-Task-ID (a normal JWT /
-// mul_ PAT leaves X-Actor-Source empty and does NOT strip a client-forged
-// X-Task-ID), so requiring the task-token actor is load-bearing — without it a
-// member could forge X-Task-ID and read another session's history.
+// session. It is authorized by the task-scoped token alone: the auth middleware
+// deletes client-supplied X-Actor-Source / X-Agent-ID / X-Task-ID from every
+// request and re-stamps them only on the mat_ branch (MUL-3428), so a normal
+// JWT / mul_ PAT arrives here carrying no task context at all.
+//
+// The actor check stays anyway, and stays load-bearing: this endpoint returns
+// another member's chat history if its task binding is ever wrong, so it names
+// the credential it requires rather than inheriting that guarantee silently
+// from a middleware two layers away.
 type chatHistoryScope struct {
 	sessionID       pgtype.UUID
 	contextRevision pgtype.Int8
@@ -368,7 +436,7 @@ func parseHistoryLimit(raw string) int {
 // pure function of the channel type its caller already resolved, so the note
 // and the response's channel_type cannot disagree.
 //
-// The reader is Slack-only, so every other platform lands here — and the note
+// Unsupported native history reads land here. The old note
 // said "this conversation is not connected to a chat channel", which for a
 // WeCom, Lark or DingTalk session is simply false. An agent told it is in a
 // web-only conversation reasons differently about who can see its answer than

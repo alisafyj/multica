@@ -1,6 +1,8 @@
 export type AutopilotStatus = "active" | "paused" | "archived";
 
-export type AutopilotExecutionMode = "create_issue" | "run_only";
+// "test_run": each run builds a test round from `test_plan_id` and dispatches
+// it to the assignee (testing-center M6).
+export type AutopilotExecutionMode = "create_issue" | "run_only" | "test_run";
 
 // `assignee_type` selects which polymorphic actor backs the autopilot:
 // "agent" → assignee_id references agent(id); "squad" → assignee_id references
@@ -37,6 +39,9 @@ export interface Autopilot {
   pause_reason?: string | null;
   execution_mode: AutopilotExecutionMode;
   issue_title_template: string | null;
+  // test_run mode only; absent on older servers and null in the other modes.
+  test_plan_id?: string | null;
+  test_run_parallelism?: number | null;
   created_by_type: string;
   created_by_id: string;
   last_run_at: string | null;
@@ -122,6 +127,8 @@ export interface AutopilotRun {
   status: AutopilotRunStatus;
   issue_id: string | null;
   task_id: string | null;
+  // The test round a test_run-mode run launched; absent on older servers.
+  test_run_id?: string | null;
   triggered_at: string;
   completed_at: string | null;
   failure_reason: string | null;
@@ -163,6 +170,9 @@ export interface CreateAutopilotRequest {
   assignee_id: string;
   execution_mode: AutopilotExecutionMode;
   issue_title_template?: string;
+  // Required when execution_mode is "test_run".
+  test_plan_id?: string | null;
+  test_run_parallelism?: number | null;
   subscribers?: AutopilotSubscriberInput[];
 }
 
@@ -177,6 +187,8 @@ export interface UpdateAutopilotRequest {
   status?: AutopilotStatus;
   execution_mode?: AutopilotExecutionMode;
   issue_title_template?: string | null;
+  test_plan_id?: string | null;
+  test_run_parallelism?: number | null;
   // When present, fully replaces the autopilot's subscriber template;
   // omit to leave it untouched.
   subscribers?: AutopilotSubscriberInput[];

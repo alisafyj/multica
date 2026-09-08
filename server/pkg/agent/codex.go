@@ -199,6 +199,68 @@ func CodexResumeOverflowError(errText string) bool {
 	return strings.Contains(lower, codexResumeMarker) && strings.Contains(lower, codexLineOverflowMarker)
 }
 
+// codexRetiredCompactPath is the request path only the legacy remote-compaction
+// route ever calls. The v2 route compacts on the ordinary /responses stream
+// instead, so this segment appears only when the legacy route was selected.
+const codexRetiredCompactPath = "responses/compact"
+
+// codexRemoteCompactMarker opens the error Codex writes when a remote
+// compaction task fails. Both routes share it — compact_remote_v2.rs labels its
+// own failures with the same phrase — so it establishes only that compaction is
+// what failed, never which route ran.
+const codexRemoteCompactMarker = "remote compact task"
+
+// CodexRetiredCompactionError reports whether an agent error is Codex failing
+// to compact a conversation over the route OpenAI has retired, e.g.
+//
+//	Error running remote compact task: unexpected status 404 Not Found: {"detail":"Not Found"},
+//	url: https://chatgpt.com/backend-api/codex/responses/compact, cf-ray: ..., request id: ...
+//
+// The route is chosen by turning `remote_compaction_v2` off. Older Codex builds
+// ignored that setting, so a value added as a workaround for an unrelated,
+// since-fixed defect can start failing on upgrade without the user touching
+// anything (GH #8000, upstream openai/codex#42468). Nothing in the text names
+// the setting, so the failure is unreadable on its own — which is the whole
+// reason this predicate exists: callers use it to attach the remedy.
+//
+// The retired PATH is what has to be present. The compaction marker alone is
+// not evidence of anything: the v2 route wraps its own failures in the same
+// "Error running remote compact task" prefix, and a v2 stream can return 404
+// too — so keying on the marker plus a status code would tell a user whose
+// setting is already correct to go turn it off, the exact opposite of the fix.
+// The path cannot be produced that way; a compaction request reaching
+// /responses/compact at all means the legacy route was selected, whatever
+// status came back.
+//
+// That leaves a deliberate false negative: a Codex build that reports this
+// failure without the url tail gets no hint. There is no second signal in the
+// text that identifies the route, and the two errors are otherwise
+// indistinguishable, so the choice is between missing some cases and
+// misdirecting the users whose config was never the problem. A missed hint
+// costs what today already costs; a wrong hint spends someone's afternoon.
+//
+// Deliberately NOT a resume-safety predicate. The stuck thread is recoverable:
+// once the setting is right compaction succeeds and the same conversation
+// continues, so retiring the session here would throw away exactly the context
+// the fix restores. Text only.
+//
+// Delete once no Codex old enough to select the retired route is still in use.
+// Upstream intends to mark the flag Stage::Removed or fall back on the 404,
+// and under either fix this predicate simply stops matching: it overrides no
+// config and stands between nobody and a setting they may legitimately want
+// off, so it costs one substring check on an already-failing path until then
+// and comes out in a single commit. That is the difference from forcing
+// `--enable remote_compaction_v2`, which was declined for the opposite reason
+// (GH #8019) — an override outlives the defect and blocks the legitimate case.
+func CodexRetiredCompactionError(errText string) bool {
+	if errText == "" {
+		return false
+	}
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, codexRemoteCompactMarker) &&
+		strings.Contains(lower, codexRetiredCompactPath)
+}
+
 // codexModelCatalogRefreshFailureSignal matches the Codex models-manager error
 // emitted when the model catalog could not be refreshed. Codex reports several
 // distinct causes under this prefix ("timeout waiting for child process to
@@ -1294,6 +1356,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 	var semanticObserved atomic.Bool
 	turnNotificationGate := &codexTurnNotificationGate{}
 	firstItemWait := &codexFirstItemWaitObservation{}
+	// Daemon-side tool-call budget (concise mode). See the onMessage gate
+	// for the denial path; atomics because onMessage runs on the reader
+	// goroutine while the run goroutine assembles the result.
+	toolBudget := newToolCallBudget(opts.MaxToolCalls)
+	var budgetExhausted atomic.Bool
 
 	// turnDone is set before starting the reader goroutine so there is no
 	// race between the lifecycle goroutine writing and the reader reading.
@@ -1326,6 +1393,23 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 				outputMu.Lock()
 				lastAgentMessage = msg.Content
 				outputMu.Unlock()
+			}
+			if msg.Type == MessageToolUse && msg.Tool != "todo_write" {
+				// Daemon-side tool-call budget (concise mode): codex's
+				// app-server protocol has no native turn cap, so count tool
+				// uses here. todo_write is excluded: it is not a tool call
+				// but this backend's normalisation of the turn/plan/updated
+				// NOTIFICATION into the shared todo renderer's shape (see
+				// handleRawNotification) — charging it would spend the
+				// budget on planning rather than tool invocation. A denied
+				// call kills the process tree and the budget flag below
+				// files the failure before any aborted/crashed classifier
+				// can claim it.
+				if !toolBudget.Allow() {
+					budgetExhausted.Store(true)
+					signalProcessGroup(cmd, syscall.SIGKILL)
+					return
+				}
 			}
 			activity := describeCodexSemanticActivity(msg)
 			observedAt := time.Now()
@@ -2192,6 +2276,15 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 			default:
 				b.cfg.Logger.Warn("codex lifecycle", fields...)
 			}
+		}
+
+		// Budget exhaustion is authoritative: the kill cancels the run
+		// context and would otherwise surface as aborted or a signal-crash
+		// failure. Check it after the turn loop settles so it wins over any
+		// classifier that ran first.
+		if budgetExhausted.Load() {
+			finalStatus = "failed"
+			finalError = fmt.Sprintf("codex: %s (cap %d)", ErrToolBudgetExceeded.Error(), opts.MaxToolCalls)
 		}
 
 		outputMu.Lock()

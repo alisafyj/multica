@@ -209,6 +209,10 @@ export type {
   UpdateTestCaseRequest,
   ListTestCasesResponse,
   ListTestCaseModulesResponse,
+  RecommendTestCasesRequest,
+  TestCaseRecommendationMatch,
+  TestCaseRecommendation,
+  RecommendTestCasesResponse,
   ListTestCaseRevisionsResponse,
   // Phase 2 — test generation
   TestGenerationJobStatus,
@@ -262,6 +266,16 @@ export type {
   LinkTestCaseIssuesRequest,
   DispatchTestRunResponse,
   DispatchTestRunBlockedResponse,
+  TestCapabilityRequirement,
+  RuntimeCapabilityScanResponse,
+  RuntimeDeviceHub,
+  IssueTestSummary,
+  IssueTestRunSummary,
+  IssueTestDefect,
+  IssueFoundBy,
+  TestPlanStats,
+  TestPlanRunStat,
+  TestPlanModuleStat,
 } from "./testing";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type * from "./product-map";

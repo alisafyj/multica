@@ -101,6 +101,9 @@ type PrepareParams struct {
 	// is absent — set when an explicit named profile was requested so a typo
 	// doesn't silently seed from an empty home and drop the user's auth/config.
 	HermesSourceMustExist bool
+	// HermesModel is the task's explicit model. The isolated overlay may
+	// preselect it only when its provider already matches the source config.
+	HermesModel string
 	// HermesMemoryStore is the agent's persistent Hermes memory store
 	// (HermesMemoryStorePath) the overlay links memories/ to, so memory outlives
 	// the task. Empty keeps memories/ task-local — no agent to key on, or the
@@ -709,6 +712,9 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		if err != nil {
 			return nil, fmt.Errorf("execenv: prepare hermes-home: %w", err)
 		}
+		if err := pinHermesTaskModel(hermesHome, params.HermesModel); err != nil {
+			return nil, fmt.Errorf("execenv: pin hermes model: %w", err)
+		}
 		env.HermesHome = hermesHome
 		if sessions.Mounted {
 			env.HermesSessionStore = params.HermesSessionStore
@@ -834,6 +840,7 @@ type ReuseParams struct {
 	// conversation session store.
 	HermesSourceHome      string
 	HermesSourceMustExist bool
+	HermesModel           string
 	HermesEnv             map[string]string
 	HermesMemoryStore     string
 	HermesSessionStore    string
@@ -925,8 +932,9 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	}
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.
-	// On reuse the workdir still holds the prior run's issue_context.md and
-	// skill directories; without clearing them first, writeSkillFiles sees
+	// On reuse the workdir still holds the prior run's skill directories (and,
+	// for a workdir prepared before MUL-6984, its issue_context.md); without
+	// clearing them first, writeSkillFiles sees
 	// its own earlier output occupying the canonical slug and falls back to
 	// a collision-free sibling (issue-review, issue-review-multica,
 	// issue-review-multica-2, …), accumulating a fresh duplicate on every
@@ -944,8 +952,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	//      the agent populated (correct on the local_directory teardown path),
 	//      which would otherwise keep the canonical slug occupied and push the
 	//      refresh back to issue-review-multica.
-	//   2. CleanupSidecars rolls back the remaining sidecar files
-	//      (issue_context.md, project resources) and the manifest itself.
+	//   2. CleanupSidecars rolls back the remaining sidecar files (project
+	//      resources today, plus any issue_context.md recorded by a manifest
+	//      an older build wrote — legacy upgrade cleanup, not a live writer)
+	//      and the manifest itself.
 	//
 	// No-op when RootDir is empty (legacy local_directory reuse, which the
 	// daemon skips anyway) or when no prior manifest exists (older build).
@@ -958,7 +968,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		}
 	}
 
-	// Refresh context files (issue_context.md, skills). Reuse tracks a
+	// Refresh context files (skills, project resources). Reuse tracks a
 	// fresh manifest under env.RootDir so a later CleanupSidecars sees
 	// the up-to-date list of writes (an old manifest from a prior run
 	// would otherwise reference files this Reuse no longer creates). For
@@ -1046,6 +1056,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 				// then blocks dispatch rather than silently dropping the bound
 				// skill.
 				logger.Warn("execenv: refresh hermes-home failed; forcing fresh prepare", "error", err)
+				return nil
+			}
+			if err := pinHermesTaskModel(hermesHome, params.HermesModel); err != nil {
+				logger.Warn("execenv: pin hermes model failed; forcing fresh prepare", "error", err)
 				return nil
 			}
 			env.HermesHome = hermesHome

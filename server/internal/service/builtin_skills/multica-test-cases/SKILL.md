@@ -1,6 +1,6 @@
 ---
 name: multica-test-cases
-description: "Read, write, review, or AI-generate Multica test cases and trace their repositories, project, and issues. For execution and result recording, use multica-running-tests."
+description: "Use when reading, writing, reviewing, or AI-generating Multica test cases — including finding which repositories, project, and issues a case relates to, and which browser or device a case requires. Executing a case and recording results is the multica-running-tests skill."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -8,9 +8,8 @@ allowed-tools: Bash(multica *)
 # Test Cases
 
 This skill states WHAT a Multica test case is and what the CLI guarantees about
-it, traced to source. Every claim is pinned in
-`references/test-cases-source-map.md`; when behavior differs from this document,
-the source map is where to re-check it.
+it. When behavior differs from this document, the CLI's own `--help` and the
+case JSON are the authority.
 
 ## A case is project-scoped and machine-readable
 
@@ -71,6 +70,35 @@ this and rejects the batch item with 400 otherwise.
 Each binding points at a `project_resource_id`, not a repo URL — so run
 `multica project resource list <project-id> --output json` to map an alias back
 to a checkout URL, then `multica repo checkout <url>` to fetch the code.
+
+## Change-based regression: which cases a change touches
+
+`path_globs` on a repo binding is a claim: "this case verifies these files".
+The claim is what makes a regression scope computable from a diff, with no
+history and no model:
+
+    multica testcase recommend --project <project-id> --diff origin/main --output json
+    multica testcase recommend --project <project-id> billing/checkout.rb billing/cart.rb
+    git diff --name-only origin/main | multica testcase recommend --project <project-id> --stdin
+    multica testcase recommend --project <project-id> --repo web --diff origin/main --run "Regression for PR 12"
+
+Paths are repo-relative. `--diff <ref>` runs `git diff --name-only <ref>` in
+the current directory; `--repo <alias>` restricts the claims to one binding
+when a multi-repo project's paths come from a single checkout. `--run <title>`
+creates a pending test run over the recommended cases in the same step (add
+`--parallelism N` to cap concurrent dispatch); start it with
+`multica test run start <run-id>`.
+
+The JSON answer is `{cases: [{test_case, matches: [{alias, role, glob, paths}],
+path_count}], unmatched_paths, total}` ranked by `path_count` (distinct changed
+paths the case claims), then by case number. Deprecated cases never appear.
+Glob semantics are gitignore-like: `**` spans directories, `*` and `?` stop at
+a slash, `{a,b}` alternates, a pattern without a slash matches at any depth
+(`*.rb`), and a plain directory (`mobile` or `mobile/`) claims
+everything under it. `unmatched_paths` is the gap: changed files no case
+claims. When it lists source files of a feature you know cases for, fix the
+bindings (`multica testcase update <TC-n> --repos …`) rather than hand-picking
+the run.
 
 ## Writing cases
 
@@ -226,12 +254,32 @@ case is queued in a round it was never added to.
 
 Deleting either side sweeps the links in the same transaction as the delete.
 
-## Execution belongs to a separate skill
+## Required capabilities
 
-The `multica test` command group supports test runs and result recording.
-Before executing an assigned test run, read `multica-running-tests` for
-capability discovery, execution, evidence, and result semantics. This skill
-owns case authoring and review, not execution; creating or editing a case is
-not evidence that it ran or passed. If the execution skill or a required
-capability is unavailable, report that limitation rather than invent commands
-or claim execution succeeded.
+A case may declare which kind of browser or device a round must be bound to
+before it can run:
+
+    "required_capabilities": [
+      {"kind": "browser", "match": {"browser": "chromium"}},
+      {"kind": "android_device", "match": {"os_version": ">=13"}, "optional": true}
+    ]
+
+`kind` is one of `browser`, `android_device`, `ios_device`, `computer_use`.
+`match` narrows the capability's target (exact value, or `>=`, `>`, `<=`, `<`
+on version-like values); `optional: true` means a missing kind does not block
+the run. The binding to a concrete capability happens once, at dispatch, and
+only among the capabilities the executing agent's own daemon has reported —
+a case that needs a kind no runtime provides parks the round as `blocked`
+with the missing kind named. The runtime page lists what each machine has
+reported and can ask the daemon to scan again.
+
+## Executing cases
+
+Running a case, recording results, uploading evidence and opening defects are
+covered by the `multica-running-tests` skill. This skill stops at the case as a
+document.
+Creating or editing a case is not evidence that it ran or passed. Before
+executing an assigned run, read `multica-running-tests` for capability discovery,
+execution, evidence, and result semantics. If that skill or a required capability
+is unavailable, report the limitation rather than inventing commands or claiming
+execution succeeded.

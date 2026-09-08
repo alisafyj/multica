@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -268,7 +270,11 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 	}
 	var closeStdinOnce sync.Once
 	closeStdin := func() { closeStdinOnce.Do(func() { _ = stdin.Close() }) }
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "["+label+":stderr] ")
+	// Watch stderr as well as log it. When Pi refuses a resume it exits before
+	// emitting a single JSON event, so stderr is the only place the reason
+	// exists and Result.ResumeRejected has nothing else to be built from.
+	stderrWatch := newPiStderrWatcher(newLogWriter(b.cfg.Logger, "["+label+":stderr] "))
+	cmd.Stderr = stderrWatch
 
 	if err := startOwnedProcessTree(cmd, b.cfg.Logger); err != nil {
 		closeStdin()
@@ -313,6 +319,12 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		var finalError string
 		var lastTurnError string
 		usage := make(map[string]TokenUsage)
+		// Daemon-side tool-call budget (concise mode). Pi's CLI has no
+		// native turn limit, so the stream itself is the only place the
+		// count is observable. Denial kills the process tree; the result
+		// below maps it to a failure that names the budget.
+		toolBudget := newToolCallBudget(opts.MaxToolCalls)
+		budgetExhausted := false
 
 		// Pi message_update events can be large (they embed the full message
 		// partial on each delta); the shared stream bound covers that.
@@ -355,6 +367,16 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 				}
 
 			case "tool_execution_start":
+				if !toolBudget.Allow() {
+					// Budget exhausted: stop admitting new tool calls. Kill
+					// the process tree — Pi has no in-band way to cancel a
+					// running turn — and let the result assembly below file
+					// the budget failure. Events already in flight may still
+					// parse; budgetExhausted makes the terminal state sticky.
+					budgetExhausted = true
+					signalProcessGroup(cmd, syscall.SIGKILL)
+					continue
+				}
 				var params map[string]any
 				if len(evt.Args) > 0 {
 					_ = json.Unmarshal(evt.Args, &params)
@@ -436,7 +458,13 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		// child exited has returned by now. The writer sends exactly once.
 		writeErr := <-writeErrCh
 
-		if runCtx.Err() == context.DeadlineExceeded {
+		// Budget exhaustion is checked BEFORE the context branches: the kill
+		// above cancels the run context (the ctx-done goroutine fires when
+		// cancel() runs), which would otherwise misfile the run as aborted.
+		if budgetExhausted {
+			finalStatus = "failed"
+			finalError = fmt.Sprintf("%s: %s (cap %d)", label, ErrToolBudgetExceeded.Error(), opts.MaxToolCalls)
+		} else if runCtx.Err() == context.DeadlineExceeded {
 			finalStatus = "timeout"
 			finalError = fmt.Sprintf("%s timed out after %s", label, timeout)
 		} else if runCtx.Err() == context.Canceled {
@@ -484,6 +512,11 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 			DurationMs: duration.Milliseconds(),
 			SessionID:  sessionPath,
 			Usage:      usage,
+			// Only a run that asked to resume can have had a resume refused.
+			// On a cold run the phrase cannot appear anyway, but stating the
+			// precondition keeps this honest against Result.ResumeRejected's
+			// contract rather than relying on Pi never saying it.
+			ResumeRejected: opts.ResumeSessionID != "" && stderrWatch.resumeRefused(),
 		}
 	}()
 
@@ -501,6 +534,64 @@ func piSessionBusyResult(label, sessionPath string) *Session {
 	}
 	close(resCh)
 	return &Session{Messages: msgCh, Result: resCh}
+}
+
+// piResumeRefusedMarker is Pi's message when a resumed transcript names a
+// working directory that no longer exists. Pi re-anchors a resumed run to the
+// cwd recorded in the session header; when that directory is gone it prints
+// this to stderr and exits 1 immediately, before any JSON event, any tool call
+// and any output (GH #8082).
+//
+// The daemon's resume gate already declines to hand Pi such a session, so in
+// normal operation this never fires. It is the second layer, and its reach is
+// exactly this one refusal arriving on a run the gate let through: the
+// directory disappearing between the gate's check and Pi's, a header the
+// gate's bounded scan did not reach or could not parse, or a Pi-family runtime
+// the gate does not model as refusing. It is a single phrase match, so it does
+// NOT generalise to some other refusal Pi might grow later.
+//
+// Without it such a run fails as a generic non-retryable process_failure and
+// the same stale pointer is served again on the next claim — the permanent
+// loop #8082 reported.
+const piResumeRefusedMarker = "Stored session working directory does not exist"
+
+// piStderrTailLimit bounds the retained stderr tail. The marker arrives in a
+// single write at startup, so this only has to be large enough that a partial
+// flush cannot split it apart.
+const piStderrTailLimit = 8 << 10
+
+// piStderrWatcher tees Pi's stderr to the debug log while retaining a bounded
+// tail to test for a resume refusal. Writes arrive from the child process
+// goroutine and resumeRefused is read from the result goroutine after Wait, so
+// the buffer is mutex-guarded rather than relying on that ordering.
+type piStderrWatcher struct {
+	log io.Writer
+
+	mu   sync.Mutex
+	tail []byte
+}
+
+func newPiStderrWatcher(log io.Writer) *piStderrWatcher {
+	return &piStderrWatcher{log: log}
+}
+
+func (w *piStderrWatcher) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	w.tail = append(w.tail, p...)
+	if len(w.tail) > piStderrTailLimit {
+		w.tail = w.tail[len(w.tail)-piStderrTailLimit:]
+	}
+	w.mu.Unlock()
+	// Never fail the child's stderr write on a logging problem: a short write
+	// here makes Pi's own writer error out mid-run.
+	_, _ = w.log.Write(p)
+	return len(p), nil
+}
+
+func (w *piStderrWatcher) resumeRefused() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return bytes.Contains(w.tail, []byte(piResumeRefusedMarker))
 }
 
 // ── Pi event types ──

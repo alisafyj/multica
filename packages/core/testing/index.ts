@@ -24,6 +24,7 @@ export {
   testPlanListOptions,
   testPlanDetailOptions,
   testPlanCasesOptions,
+  testPlanStatsOptions,
   testRunListOptions,
   testRunDetailOptions,
   testRunCasesOptions,
@@ -31,12 +32,14 @@ export {
   testCaseResultTimelineOptions,
   testCaseIssuesOptions,
   issueTestCasesOptions,
+  issueTestSummaryOptions,
 } from "./queries";
 export {
   useCreateTestCase,
   useUpdateTestCase,
   useApproveTestCase,
   useDeleteTestCase,
+  useRecommendTestCases,
   useCreateTestGenerationJob,
   useGenerateTestGenerationPlan,
   useUpdateTestGenerationPlan,
@@ -58,6 +61,7 @@ export {
   useOpenTestRunCaseDefect,
   useLinkTestCaseIssues,
   useUnlinkTestCaseIssue,
+  useRequestRuntimeCapabilityScan,
 } from "./mutations";
 export * from "./config";
 export {
@@ -68,3 +72,5 @@ export {
   type TestCaseViewFilters,
   type TestCaseViewState,
 } from "./stores/view-store";
+export { useTestRunCaseLiveFrame } from "./use-live-frame";
+export { FLAKY_WINDOW, isFlakyHistory } from "./flaky";

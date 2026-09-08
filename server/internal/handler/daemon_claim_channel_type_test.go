@@ -18,10 +18,8 @@ import (
 // mis-flag made the daemon inject `multica attachment upload` guidance into a
 // conversation that cannot carry attachments at all.
 //
-// chat_in_thread stays Slack-only and is asserted as such: it selects between
-// `multica chat history` and `multica chat thread`, and both endpoints are
-// hardwired to h.SlackHistory (chat_history.go). There is no Feishu reader, so
-// the flag has nothing to select between and must not imply one exists.
+// chat_in_thread selects native thread reads: Slack replies and Feishu group
+// topics (including their root). Other channels keep transcript-only guidance.
 
 // seedChannelBinding binds sessionID to a group room on an IM channel of
 // channelType, creating the installation the binding requires. This is the row
@@ -127,20 +125,39 @@ func TestClaim_FeishuBoundSessionReportsChannelType(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	agentID, sessionID, runtimeID, _ := setupDirectChatSession(t, ctx, "feishu-backed chat")
-	// last_thread_id != last_message_id: the shape that would set ChatInThread on
-	// Slack. Feishu must still report false — there is no reader to thread into.
-	seedChannelBinding(t, ctx, agentID, sessionID, "feishu", "msg-1", "thread-9")
-	taskID := insertChannelChatTask(t, ctx, agentID, runtimeID, sessionID)
-	seedChannelTaskDelivery(t, ctx, taskID, sessionID)
-	requeueTaskForClaim(t, ctx, sessionID)
-
-	claimed := claimChatChannelFields(t, runtimeID)
-	if claimed.ChannelType != "feishu" {
-		t.Errorf("chat_channel_type = %q, want %q — a Feishu session must not look like a web chat", claimed.ChannelType, "feishu")
-	}
-	if claimed.InThread {
-		t.Error("chat_in_thread must stay false on Feishu: it selects between two Slack-only read commands")
+	for _, tc := range []struct {
+		name      string
+		chatType  string
+		messageID string
+		threadID  string
+		want      bool
+	}{
+		{"topic root", "group", "om_root", "omt_topic", true},
+		{"topic reply", "group", "om_reply", "omt_topic", true},
+		{"non-topic group", "group", "om_message", "", false},
+		{"direct message", "p2p", "om_message", "", false},
+		{"direct message cannot acquire topic reader", "p2p", "om_message", "omt_topic", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentID, sessionID, runtimeID, _ := setupDirectChatSession(t, ctx, tc.name)
+			seedChannelBindingOfChatType(t, ctx, agentID, sessionID, "feishu", tc.chatType, tc.messageID, tc.threadID)
+			taskID := insertChannelChatTask(t, ctx, agentID, runtimeID, sessionID)
+			seedChannelTaskDelivery(t, ctx, taskID, sessionID)
+			// A later inbound message must not change this task's topic capability.
+			if _, err := testPool.Exec(ctx, `UPDATE channel_chat_session_binding
+				SET last_thread_id = CASE WHEN last_thread_id = '' THEN 'omt_later' ELSE '' END
+				WHERE chat_session_id = $1`, sessionID); err != nil {
+				t.Fatal(err)
+			}
+			requeueTaskForClaim(t, ctx, sessionID)
+			claimed := claimChatChannelFields(t, runtimeID)
+			if claimed.ChannelType != "feishu" {
+				t.Errorf("chat_channel_type = %q, want feishu", claimed.ChannelType)
+			}
+			if claimed.InThread != tc.want {
+				t.Errorf("chat_in_thread = %v, want %v from immutable delivery", claimed.InThread, tc.want)
+			}
+		})
 	}
 }
 
@@ -149,18 +166,25 @@ func TestClaim_SlackBoundSessionStillReportsThreadState(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	agentID, sessionID, runtimeID, _ := setupDirectChatSession(t, ctx, "slack-backed chat")
-	seedChannelBinding(t, ctx, agentID, sessionID, "slack", "msg-1", "thread-9")
-	taskID := insertChannelChatTask(t, ctx, agentID, runtimeID, sessionID)
-	seedChannelTaskDelivery(t, ctx, taskID, sessionID)
-	requeueTaskForClaim(t, ctx, sessionID)
-
-	claimed := claimChatChannelFields(t, runtimeID)
-	if claimed.ChannelType != "slack" {
-		t.Errorf("chat_channel_type = %q, want %q", claimed.ChannelType, "slack")
-	}
-	if !claimed.InThread {
-		t.Error("chat_in_thread should be true when last_thread_id differs from last_message_id")
+	for _, tc := range []struct {
+		name     string
+		threadID string
+		want     bool
+	}{
+		{"thread reply", "thread-9", true},
+		{"top-level root", "msg-1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentID, sessionID, runtimeID, _ := setupDirectChatSession(t, ctx, tc.name)
+			seedChannelBinding(t, ctx, agentID, sessionID, "slack", "msg-1", tc.threadID)
+			taskID := insertChannelChatTask(t, ctx, agentID, runtimeID, sessionID)
+			seedChannelTaskDelivery(t, ctx, taskID, sessionID)
+			requeueTaskForClaim(t, ctx, sessionID)
+			claimed := claimChatChannelFields(t, runtimeID)
+			if claimed.ChannelType != "slack" || claimed.InThread != tc.want {
+				t.Errorf("Slack claim = %+v, want chat_in_thread=%v", claimed, tc.want)
+			}
+		})
 	}
 }
 
@@ -189,7 +213,7 @@ func TestClaim_UnlistedChannelBoundSessionReportsChannelType(t *testing.T) {
 		t.Errorf("chat_channel_type = %q, want %q — a channel the handler does not name must not look like a web chat", claimed.ChannelType, "wecom")
 	}
 	if claimed.InThread {
-		t.Error("chat_in_thread must stay false off Slack: it selects between two Slack-only read commands")
+		t.Error("chat_in_thread must stay false for a channel without a native thread reader")
 	}
 }
 

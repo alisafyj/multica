@@ -367,11 +367,14 @@ var concurrentIndexCleanups = map[string]string{
 	"908_test_case_issue_issue_index":                      "test_case_issue_issue_idx",
 	"909_test_case_issue_workspace_case_index":             "test_case_issue_workspace_case_idx",
 	"912_task_run_evidence_task_attempt_index":             "idx_task_run_evidence_task_attempt",
+	"912_test_run_case_agent_task_index":                   "test_run_case_agent_task_idx",
 	"914_task_pending_input_id_index":                      "idx_task_pending_input_id",
+	"915_prd_draft_topic_index":                            "chat_prd_draft_topic_idx",
 	"915_task_pending_input_request_index":                 "idx_task_pending_input_request",
 	"916_task_pending_input_issue_index":                   "idx_task_pending_input_issue",
 	"918_task_run_evidence_claim_generation_index":         "idx_task_run_evidence_task_attempt_generation",
 	"446_issue_properties_bigm_index":                      "idx_issue_properties_bigm",
+	"919_autopilot_run_test_run_index":                     "idx_autopilot_run_test_run",
 }
 
 // concurrentDownIndexCleanups covers every migration whose down direction
@@ -395,6 +398,7 @@ var concurrentDownIndexCleanups = map[string]string{
 	"375_drop_issue_last_activity_index":                    "idx_issue_workspace_last_activity",
 	"391_drop_agent_task_queue_dispatched_prepare_index":    "idx_agent_task_queue_dispatched_prepare",
 	"437_drop_agent_runtime_last_seen_at_index":             "idx_agent_runtime_last_seen_at",
+	"450_drop_comment_delegated_failure_pending_index":      "idx_comment_delegated_failure_pending",
 	"919_drop_task_run_evidence_task_attempt_index":         "idx_task_run_evidence_task_attempt",
 }
 

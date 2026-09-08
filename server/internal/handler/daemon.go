@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/entitlement"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -40,6 +41,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
+
+// claimPollHintMinDelay bounds a future mismatch between the hint query and
+// deferred-task promotion to at most one follow-up claim per second. Under the
+// shared eligibility fences an overdue task should normally be promoted by the
+// current request, so this is a defense-in-depth floor rather than the steady
+// state poll interval.
+const claimPollHintMinDelay = time.Second
 
 // ---------------------------------------------------------------------------
 // Daemon workspace ownership helpers
@@ -873,6 +881,7 @@ func (h *Handler) mergeLegacyRuntime(ctx context.Context, newRuntimeID, oldRunti
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit merge: %w", err)
 	}
+	h.NotifyRuntimeGone(uuidToString(oldRuntimeID))
 
 	slog.Info("legacy runtime merged",
 		"legacy_daemon_id", legacyID,
@@ -1113,8 +1122,16 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	authMs = time.Since(start).Milliseconds()
 
-	ack, m, err := h.processHeartbeat(r.Context(), rt, req.SupportsBatchImport)
-	updateMs = m.UpdateMs
+	updateStart := time.Now()
+	if err := h.recordHeartbeat(r.Context(), rt); err != nil {
+		updateMs = time.Since(updateStart).Milliseconds()
+		outcome = "error_update"
+		writeError(w, http.StatusInternalServerError, "heartbeat failed")
+		return
+	}
+	updateMs = time.Since(updateStart).Milliseconds()
+
+	ack, m, err := h.processHeartbeat(r.Context(), runtimeID, req.SupportsBatchImport)
 	probeModelMs = m.ProbeModelMs
 	popModelMs = m.PopModelMs
 	probeSkillsMs = m.ProbeSkillsMs
@@ -1147,47 +1164,50 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if ack.PendingLocalSkillImport != nil {
 		resp["pending_local_skill_import"] = ack.PendingLocalSkillImport
 	}
+	if ack.PendingCapabilityScan != nil {
+		resp["pending_capability_scan"] = ack.PendingCapabilityScan
+	}
 	if len(ack.PendingLocalSkillImports) > 0 {
 		resp["pending_local_skill_imports"] = ack.PendingLocalSkillImports
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// HandleDaemonWSHeartbeat is the daemonws.HeartbeatHandler entry point: it
-// resolves the runtime, verifies the connection's workspace owns it, and
-// returns the ack payload. It is the WebSocket-side mirror of DaemonHeartbeat.
-//
-// Workspace authorization is re-checked on every heartbeat instead of trusted
-// from the upgrade-time check because runtime ownership can change (e.g. a
-// runtime is reassigned to another workspace mid-connection).
-//
-// When the runtime row is missing (pgx.ErrNoRows), the function returns a
-// successful ack with Status=HeartbeatStatusRuntimeGone and RuntimeGone=true
-// instead of an error. That keeps the hub from logging every beat at Warn,
-// and tells the daemon to drop the stale runtime and re-register. Other DB
-// errors still propagate as errors so they keep their existing Warn logging
-// and the daemon does not mistake a hiccup for a deletion.
+// HandleDaemonWSHeartbeat is the daemonws.HeartbeatHandler entry point. The
+// WebSocket upgrade already batch-authenticated the fixed runtime set and
+// captured each runtime's liveness state in a connection lease, so the hot
+// path never reads agent_runtime. HTTP heartbeat remains the stateless lookup
+// fallback for a daemon that stops receiving WebSocket acknowledgements.
 func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error) {
-	runtimeUUID, err := util.ParseUUID(runtimeID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid runtime_id: %w", err)
+	lease := identity.RuntimeLeases[runtimeID]
+	if lease == nil {
+		return nil, fmt.Errorf("runtime not in connection lease")
 	}
-	rt, err := h.getAgentRuntime(ctx, obsmetrics.RuntimeLookupSourceHeartbeatWS, runtimeUUID)
-	if err != nil {
-		if isNotFound(err) {
-			return &protocol.DaemonHeartbeatAckPayload{
-				RuntimeID:   runtimeID,
-				Status:      protocol.HeartbeatStatusRuntimeGone,
-				RuntimeGone: true,
-			}, nil
-		}
-		return nil, fmt.Errorf("get agent runtime: %w", err)
-	}
-	if !identity.AllowsWorkspace(uuidToString(rt.WorkspaceID)) {
+	// Defensive consistency assertion only: the workspace scope and lease came
+	// from the same connection-time query. This does not re-authorize against DB.
+	if !identity.AllowsWorkspace(lease.Snapshot().WorkspaceID) {
 		return nil, fmt.Errorf("runtime not in connection workspace")
 	}
-	ack, _, err := h.processHeartbeat(ctx, rt, supportsBatchImport)
+	if err := h.recordHeartbeatLease(ctx, runtimeID, lease); err != nil {
+		if isNotFound(err) {
+			if h.DaemonRuntimeGone != nil {
+				h.NotifyRuntimeGone(runtimeID)
+				return nil, nil
+			}
+			return runtimeGoneHeartbeatAck(runtimeID), nil
+		}
+		return nil, err
+	}
+	ack, _, err := h.processHeartbeat(ctx, runtimeID, supportsBatchImport)
 	return ack, err
+}
+
+func runtimeGoneHeartbeatAck(runtimeID string) *protocol.DaemonHeartbeatAckPayload {
+	return &protocol.DaemonHeartbeatAckPayload{
+		RuntimeID:   runtimeID,
+		Status:      protocol.HeartbeatStatusRuntimeGone,
+		RuntimeGone: true,
+	}
 }
 
 // recordHeartbeat marks the runtime as alive. When LivenessStore is available
@@ -1204,24 +1224,65 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 // coalesce many runtimes' bumps into one bulk UPDATE per tick. See
 // heartbeat_scheduler.go for the two implementations.
 func (h *Handler) recordHeartbeat(ctx context.Context, rt db.AgentRuntime) error {
+	return h.recordHeartbeatState(ctx, rt.ID, uuidToString(rt.ID), heartbeatLivenessState{
+		Status:          rt.Status,
+		LastSeenAt:      rt.LastSeenAt.Time,
+		LastSeenAtValid: rt.LastSeenAt.Valid,
+		WorkspaceID:     rt.WorkspaceID,
+	}, nil)
+}
+
+func (h *Handler) recordHeartbeatLease(ctx context.Context, runtimeID string, lease *daemonws.RuntimeLease) error {
+	runtimeUUID, err := util.ParseUUID(runtimeID)
+	if err != nil {
+		return fmt.Errorf("invalid runtime_id: %w", err)
+	}
+	state := lease.Snapshot()
+	// Lenient parse: the workspace ID only feeds the recovery refresh payload.
+	// An invalid value suppresses the event instead of failing the heartbeat.
+	wsUUID, _ := util.ParseUUID(state.WorkspaceID)
+	return h.recordHeartbeatState(ctx, runtimeUUID, runtimeID, heartbeatLivenessState{
+		Status:          state.Status,
+		LastSeenAt:      state.LastSeenAt,
+		LastSeenAtValid: state.LastSeenAtValid,
+		WorkspaceID:     wsUUID,
+	}, lease.MarkDBWriteScheduled)
+}
+
+type heartbeatLivenessState struct {
+	Status          string
+	LastSeenAt      time.Time
+	LastSeenAtValid bool
+	// WorkspaceID feeds the recovery lifecycle refresh; it is already known
+	// from the lease snapshot or the HTTP row and never re-read from the DB.
+	WorkspaceID pgtype.UUID
+}
+
+func (h *Handler) recordHeartbeatState(
+	ctx context.Context,
+	runtimeUUID pgtype.UUID,
+	runtimeID string,
+	state heartbeatLivenessState,
+	markDBWriteScheduled func(time.Time),
+) error {
 	now := time.Now()
 
 	// Decide whether the DB row needs a write *before* touching Redis, so a
 	// Touch failure can simply force needDBWrite=true without re-evaluating
 	// the structural reasons.
 	needDBWrite := !h.LivenessStore.Available() ||
-		rt.Status != "online" ||
-		!rt.LastSeenAt.Valid ||
-		now.Sub(rt.LastSeenAt.Time) >= runtimeHeartbeatDBFlushInterval
+		state.Status != "online" ||
+		!state.LastSeenAtValid ||
+		now.Sub(state.LastSeenAt) >= runtimeHeartbeatDBFlushInterval
 
 	if h.LivenessStore.Available() {
-		if err := h.LivenessStore.Touch(ctx, uuidToString(rt.ID), runtimeLivenessTTL); err != nil {
+		if err := h.LivenessStore.Touch(ctx, runtimeID, runtimeLivenessTTL); err != nil {
 			// Redis hiccup: degrade transparently to the DB-only path for
 			// this beat. The sweeper falls back to its DB threshold the
 			// same way when IsAliveBatch fails, so end-to-end correctness
 			// is preserved.
 			slog.Warn("liveness touch failed; falling back to DB heartbeat",
-				"runtime_id", uuidToString(rt.ID), "error", err)
+				"runtime_id", runtimeID, "error", err)
 			needDBWrite = true
 		}
 	}
@@ -1230,33 +1291,55 @@ func (h *Handler) recordHeartbeat(ctx context.Context, rt db.AgentRuntime) error
 		return nil
 	}
 
-	// Either bumps last_seen_at on an already-online row (Touch + race
-	// fallback) or flips status from offline to online. The scheduler
-	// chooses sync vs batched per case; see HeartbeatScheduler doc.
-	return h.HeartbeatScheduler.Schedule(ctx, rt)
+	// Status transitions remain synchronous so the acknowledgement cannot race
+	// dependent work that expects an online row. The steady-state online bump
+	// is ID-only and may be coalesced by the production scheduler.
+	if state.Status != "online" || !state.LastSeenAtValid {
+		// The conditional update reports whether this beat performed the
+		// offline → online flip. Only an actual flip publishes the lifecycle
+		// refresh; a beat that lost the race (or a never-seen row already
+		// online) stays silent and keeps the unconditional update below so
+		// last_seen_at is bumped and pgx.ErrNoRows is preserved for deletions.
+		flipped, err := h.Queries.MarkAgentRuntimeOnlineIfOffline(ctx, runtimeUUID)
+		if err != nil {
+			return err
+		}
+		if flipped > 0 {
+			// Reuse daemon:register so web and mobile invalidate both runtime and
+			// agent projections. Ordinary online heartbeats stay silent.
+			if state.WorkspaceID.Valid {
+				h.PublishRuntimeRefresh(uuidToString(state.WorkspaceID), "system", "", "heartbeat_recovery")
+			}
+		} else if _, err := h.Queries.MarkAgentRuntimeOnline(ctx, runtimeUUID); err != nil {
+			return err
+		}
+		if markDBWriteScheduled != nil {
+			markDBWriteScheduled(now)
+		}
+		return nil
+	}
+	if err := h.HeartbeatScheduler.Schedule(ctx, runtimeUUID, state.WorkspaceID); err != nil {
+		return err
+	}
+	if markDBWriteScheduled != nil {
+		markDBWriteScheduled(now)
+	}
+	return nil
 }
 
 // heartbeatMetrics carries per-stage timings out of processHeartbeat so the
 // HTTP slow-log can stay structured. The WS path discards them.
 type heartbeatMetrics struct {
-	UpdateMs, ProbeModelMs, PopModelMs, ProbeSkillsMs, PopSkillsMs, ProbeImportMs, PopImportMs int64
-	ProbeModelTimedOut, ProbeSkillsTimedOut, ProbeImportTimedOut                               bool
+	ProbeModelMs, PopModelMs, ProbeSkillsMs, PopSkillsMs, ProbeImportMs, PopImportMs int64
+	ProbeModelTimedOut, ProbeSkillsTimedOut, ProbeImportTimedOut                     bool
 }
 
-// processHeartbeat does the work shared by HTTP POST /api/daemon/heartbeat and
-// the WebSocket daemon:heartbeat path: records liveness and pulls any pending
-// actions queued for the runtime. Auth and request decoding live in the
-// caller because they differ between transports.
-func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, heartbeatMetrics, error) {
+// processHeartbeat pulls pending actions for both HTTP and WebSocket
+// heartbeats using only the runtime ID. Each transport records liveness first:
+// HTTP uses its stateless runtime row, while WebSocket uses the connection
+// lease. Auth and request decoding also remain transport-specific.
+func (h *Handler) processHeartbeat(ctx context.Context, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, heartbeatMetrics, error) {
 	var m heartbeatMetrics
-	runtimeID := uuidToString(rt.ID)
-
-	updateStart := time.Now()
-	if err := h.recordHeartbeat(ctx, rt); err != nil {
-		m.UpdateMs = time.Since(updateStart).Milliseconds()
-		return nil, m, err
-	}
-	m.UpdateMs = time.Since(updateStart).Milliseconds()
 
 	slog.Debug("daemon heartbeat", "runtime_id", runtimeID)
 
@@ -1342,6 +1425,24 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 		} else {
 			slog.Warn("local skill list HasPending failed", "error", probeErr, "runtime_id", runtimeID)
 		}
+	}
+
+	// Capability scans ride the same probe-then-claim shape. They are rare
+	// (a member pressed "scan", or a run was parked for a missing kind), so
+	// the bounded probe is what keeps them off the hot path.
+	probeCapCtx, cancelProbeCap := context.WithTimeout(ctx, heartbeatHasPendingTimeout)
+	hasScan, scanProbeErr := h.CapabilityScanStore.HasPending(probeCapCtx, runtimeID)
+	cancelProbeCap()
+	switch {
+	case scanProbeErr == nil && hasScan:
+		pendingScan, popErr := h.CapabilityScanStore.PopPending(ctx, runtimeID)
+		if popErr != nil {
+			slog.Warn("capability scan PopPending failed", "error", popErr, "runtime_id", runtimeID)
+		} else if pendingScan != nil {
+			ack.PendingCapabilityScan = &protocol.DaemonHeartbeatPendingCapabilityScan{ID: pendingScan.ID}
+		}
+	case scanProbeErr != nil:
+		slog.Warn("capability scan HasPending failed", "error", scanProbeErr, "runtime_id", runtimeID)
 	}
 
 	probeImportStart := time.Now()
@@ -1774,7 +1875,37 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			"runtimes", len(authorized), "requested_max", maxTasks, "claimed", len(out),
 			"total_ms", time.Since(start).Milliseconds())
 	}
-	writeMeasuredJSON(w, http.StatusOK, map[string]any{"tasks": out})
+	response := map[string]any{"tasks": out}
+	// Only opted-in daemons understand this additive response metadata. Query
+	// after the claim so a future fire_at can shorten the long healthy-WS safety
+	// poll; a task that crossed fire_at during this request yields a bounded
+	// follow-up hint and is promoted on the next claim. If the lookup fails,
+	// omit the support bit so the daemon conservatively retains its ordinary
+	// PollInterval.
+	if len(out) < maxTasks && requestHasClientCapability(r, protocol.DaemonCapabilityClaimPollHintsV1) {
+		nextDeferred, nextErr := h.Queries.NextDeferredTaskFireAtForRuntimes(r.Context(), db.NextDeferredTaskFireAtForRuntimesParams{
+			RuntimeIds:       authorized,
+			RuntimeStaleSecs: service.RuntimeClaimFreshnessSeconds,
+		})
+		if nextErr != nil {
+			slog.Warn("batch claim: next deferred task lookup failed; retaining short client poll",
+				"error", nextErr)
+		} else {
+			response["claim_poll_hint_supported"] = true
+			if nextDeferred.Valid {
+				response["next_deferred_task_after_ms"] = claimPollHintDelay(time.Now(), nextDeferred.Time).Milliseconds()
+			}
+		}
+	}
+	writeMeasuredJSON(w, http.StatusOK, response)
+}
+
+func claimPollHintDelay(now, fireAt time.Time) time.Duration {
+	delay := fireAt.Sub(now)
+	if delay < claimPollHintMinDelay {
+		return claimPollHintMinDelay
+	}
+	return delay
 }
 
 // claimBuildFailure captures a pre-response failure from
@@ -2140,6 +2271,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 	useSkillRefs := requestHasClientCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
+	// A daemon older than the multica-platform merge assembles a brief that
+	// still names the built-ins this server stopped shipping. It cannot be
+	// fixed from here — the brief lives in the daemon binary — so the missing
+	// capability buys that daemon a redirect stub under the old name instead of
+	// a dangling pointer. Capability, not version: the version string is only
+	// ever shown to humans.
+	legacySkillRedirects := !requestHasClientCapability(r, protocol.DaemonCapabilityPlatformSkillV1)
 	var customEnv map[string]string
 	if agent.CustomEnv != nil {
 		if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
@@ -2243,7 +2381,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 	}
 	if useSkillRefs {
-		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, agent.SystemKey.String, legacySkillRedirects)
 		if err != nil {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
 		}
@@ -2255,7 +2393,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
 		}
 		agentSkillCount = len(skills)
-		builtinSkills := h.TaskService.BuiltinSkills()
+		builtinSkills := h.TaskService.BuiltinSkills(agent.SystemKey.String, legacySkillRedirects)
 		builtinSkillCount = len(builtinSkills)
 		skills = append(skills, builtinSkills...)
 		resp.Agent.Skills = skills
@@ -2555,6 +2693,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				// the triggering comment itself because that body is already
 				// injected into the prompt. Best-effort: any DB error or zero count
 				// leaves the hint suppressed.
+				//
+				// NewCommentsDeltaKnown is set on the success path REGARDLESS of
+				// the count, and is the only thing that distinguishes "the server
+				// looked and there is nothing" from "the server could not look".
+				// The count fields stay suppressed at zero — the daemon has no
+				// hint to render from a zero — but the daemon must still be able
+				// to tell a computed zero from a failed read, because only the
+				// computed one may waive the workflow's comment scan (MUL-6984).
 				if startedAt, err := h.Queries.GetLastTaskStartedAtForIssueAndAgent(r.Context(), db.GetLastTaskStartedAtForIssueAndAgentParams{
 					AgentID: task.AgentID,
 					IssueID: comment.IssueID,
@@ -2565,9 +2711,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						WorkspaceID: comment.WorkspaceID,
 						Since:       startedAt,
 						AuthorID:    task.AgentID,
-					}); err == nil && cnt > 0 {
-						resp.NewCommentCount = int(cnt)
-						resp.NewCommentsSince = startedAt.Time.UTC().Format(time.RFC3339)
+					}); err == nil {
+						resp.NewCommentsDeltaKnown = true
+						if cnt > 0 {
+							resp.NewCommentCount = int(cnt)
+							resp.NewCommentsSince = startedAt.Time.UTC().Format(time.RFC3339)
+						}
 					}
 				}
 			}
@@ -2716,10 +2865,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.ChatChannelType = delivery.ChannelType
 			resp.ChatType = delivery.ChatType
 			resp.ChatChannelDeliversFiles = h.channelDeliversFiles(delivery.ChannelType)
-			if delivery.ChannelType == string(slack.TypeSlack) {
+			switch delivery.ChannelType {
+			case string(slack.TypeSlack):
 				resp.ChatInThread = delivery.ChannelThreadID.Valid &&
 					delivery.ChannelThreadID.String != "" &&
 					delivery.ChannelThreadID.String != delivery.ChannelMessageID.String
+			case string(channel.TypeFeishu):
+				// The topic ID is present on both roots and replies, not the
+				// root message ID. Use the immutable task delivery, never the
+				// binding's latest reply target.
+				resp.ChatInThread = delivery.ChatType == string(channel.ChatTypeGroup) &&
+					delivery.ChannelThreadID.Valid && delivery.ChannelThreadID.String != ""
 			}
 		} else if !errors.Is(deliveryErr, pgx.ErrNoRows) {
 			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,
@@ -2940,10 +3096,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 		projectCtx.applyTo(&resp)
 	}
-
-	// Handoff note (MUL-3375) is populated by taskToResponse (the shared mapper
-	// resp came from above), so the daemon's prompt + issue_context.md render the
-	// assignment-handoff branch. Empty for all other task kinds.
 
 	// Quick-create task: no issue / chat / autopilot link — workspace and
 	// prompt come from the task's context JSONB. Resolve workspace from
@@ -4542,25 +4694,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		})
 	} else if testRunCtx != nil {
 		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
-			workspaceUUID, parseErr := util.ParseUUID(testRunCtx.WorkspaceID)
-			if parseErr != nil {
-				return parseErr
-			}
-			run, lookupErr := qtx.GetTestRunByAgentTask(r.Context(), db.GetTestRunByAgentTaskParams{AgentTaskID: completedTask.ID, WorkspaceID: workspaceUUID})
-			if lookupErr != nil {
-				return lookupErr
-			}
-			summary, _ := parseTestRunResultSummary(req.Output)
-			status := "completed"
-			if summary.Status == "blocked" {
-				status = "blocked"
-			}
-			params := db.UpdateTestRunParams{ID: run.ID, WorkspaceID: run.WorkspaceID, Status: pgtype.Text{String: status, Valid: true}, CompletedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}
-			if len(summary.Blockers) > 0 {
-				params.Error = pgtype.Text{String: strings.Join(summary.Blockers, "; "), Valid: true}
-			}
-			_, updateErr := qtx.UpdateTestRun(r.Context(), params)
-			return updateErr
+			return h.completeTestRunTask(r.Context(), qtx, completedTask, req.Output)
 		})
 	} else if testGenerationCtx != nil {
 		completeWithMutation(func(qtx *db.Queries, completedTask db.AgentTaskQueue) error {
@@ -5855,13 +5989,6 @@ const HeaderActiveRunsTruncated = "X-Active-Runs-Truncated"
 // 5x the bytes of this one. A caller asking "is anyone working next to me?"
 // reads none of those fields, and it is an agent spending its own context on
 // the answer, so the payload is cut to what the question needs.
-//
-// It is also not ActiveSiblingRunData, which the daemon claim payload uses.
-// That one describes the claiming agent's OWN other runs, so it has no agent
-// field; this read spans agents, and which agent is on a sibling is the answer.
-// Sharing one struct across both would put an optional field on it that only
-// one caller ever sets — the exact shape this change removed from
-// AgentTaskResponse.
 type ActiveRunSummary struct {
 	TaskID          string  `json:"task_id"`
 	IssueID         string  `json:"issue_id"`
@@ -6016,23 +6143,72 @@ func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, res
 
 	byTask := make(map[string][]TaskUsageData, len(resp))
 	for _, row := range rows {
-		var cost *int64
-		if row.CostUsdTicks.Valid {
-			v := row.CostUsdTicks.Int64
-			cost = &v
-		}
-		taskID := uuidToString(row.TaskID)
-		byTask[taskID] = append(byTask[taskID], TaskUsageData{
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			CostUsdTicks:     cost,
-		})
+		appendTaskUsage(byTask, row.TaskID, row.Provider, row.Model,
+			row.InputTokens, row.OutputTokens, row.CacheReadTokens,
+			row.CacheWriteTokens, row.CostUsdTicks)
+	}
+	attachTaskUsage(resp, byTask)
+}
+
+// hydrateAgentTaskUsage attaches the same per-run accounting shape used by the
+// issue execution log to an agent's user-facing task history. One agent-scoped
+// query covers exactly the returned task IDs, avoiding unrelated history and an
+// N+1 query per task.
+func (h *Handler) hydrateAgentTaskUsage(ctx context.Context, agentID pgtype.UUID, taskIDs []pgtype.UUID, resp []AgentTaskResponse) error {
+	if len(resp) == 0 {
+		return nil
 	}
 
+	rows, err := h.Queries.ListAgentTaskUsage(ctx, db.ListAgentTaskUsageParams{
+		AgentID: agentID,
+		TaskIds: taskIDs,
+	})
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	byTask := make(map[string][]TaskUsageData, len(resp))
+	for _, row := range rows {
+		appendTaskUsage(byTask, row.TaskID, row.Provider, row.Model,
+			row.InputTokens, row.OutputTokens, row.CacheReadTokens,
+			row.CacheWriteTokens, row.CostUsdTicks)
+	}
+	attachTaskUsage(resp, byTask)
+	return nil
+}
+
+func appendTaskUsage(
+	byTask map[string][]TaskUsageData,
+	taskID pgtype.UUID,
+	provider string,
+	model string,
+	inputTokens int64,
+	outputTokens int64,
+	cacheReadTokens int64,
+	cacheWriteTokens int64,
+	costUsdTicks pgtype.Int8,
+) {
+	var cost *int64
+	if costUsdTicks.Valid {
+		value := costUsdTicks.Int64
+		cost = &value
+	}
+	id := uuidToString(taskID)
+	byTask[id] = append(byTask[id], TaskUsageData{
+		Provider:         provider,
+		Model:            model,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+		CostUsdTicks:     cost,
+	})
+}
+
+func attachTaskUsage(resp []AgentTaskResponse, byTask map[string][]TaskUsageData) {
 	for i := range resp {
 		if usage, ok := byTask[resp[i].ID]; ok {
 			resp[i].Usage = usage

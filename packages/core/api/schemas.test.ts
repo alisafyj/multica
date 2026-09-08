@@ -909,14 +909,14 @@ describe("IssueTriggerPreviewSchema", () => {
   it("parses a well-formed response", () => {
     const parsed = IssueTriggerPreviewSchema.parse({
       triggers: [
-        { issue_id: "i1", agent_id: "a1", source: "assign", handoff_supported: true },
-        { issue_id: "i2", agent_id: "a2", source: "status", handoff_supported: false },
+        { issue_id: "i1", agent_id: "a1", source: "assign" },
+        { issue_id: "i2", agent_id: "a2", source: "status" },
       ],
       total_count: 2,
     });
     expect(parsed.total_count).toBe(2);
     expect(parsed.triggers).toHaveLength(2);
-    expect(parsed.triggers[0]).toMatchObject({ issue_id: "i1", agent_id: "a1", source: "assign", handoff_supported: true });
+    expect(parsed.triggers[0]).toMatchObject({ issue_id: "i1", agent_id: "a1", source: "assign" });
   });
 
   it("defaults missing top-level fields (empty / older backend)", () => {
@@ -931,7 +931,6 @@ describe("IssueTriggerPreviewSchema", () => {
       issue_id: "i1",
       agent_id: "",
       source: "",
-      handoff_supported: false,
     });
   });
 
@@ -1026,6 +1025,38 @@ describe("AgentTaskListSchema", () => {
     created_at: "2026-07-10T00:00:00Z",
     trigger_comment_id: "comment-3",
   };
+
+  it("keeps legacy and malformed telemetry unknown without dropping executions", () => {
+    const metrics = {
+      schema_version: 1,
+      provider: "hermes",
+      requested_model: "gpt-5.4",
+      daemon_version: "0.4.37-sso.11",
+      daemon_commit: "abc123",
+      community_base_version: "0.4.37",
+      direct_agent_mode: false,
+      concise_mode: true,
+      started_at: "2026-09-05T10:00:00Z",
+      phases: [{ name: "execute", started_at: "2026-09-05T10:00:00Z", duration_ms: 0, status: "running" }],
+    };
+    const malformed = [
+      null,
+      { ...metrics, schema_version: 2 },
+      { ...metrics, direct_agent_mode: undefined },
+      { ...metrics, concise_mode: "false" },
+      { ...metrics, started_at: "not-a-date" },
+      { ...metrics, phases: [{ ...metrics.phases[0], duration_ms: -1 }] },
+      { ...metrics, tool_calls: "unknown" },
+    ];
+    const parsed = AgentTaskListSchema.parse([
+      task,
+      ...malformed.map((execution_metrics, index) => ({ ...task, id: `bad-${index}`, execution_metrics })),
+      { ...task, id: "valid", execution_metrics: metrics },
+    ]);
+    expect(parsed.map((row) => row.id)).toEqual(["task-1", ...malformed.map((_, index) => `bad-${index}`), "valid"]);
+    expect(parsed.slice(0, -1).every((row) => row.execution_metrics === undefined)).toBe(true);
+    expect(parsed.at(-1)?.execution_metrics).toEqual(metrics);
+  });
 
   it("preserves planned and delivered comment IDs for a task run", () => {
     const parsed = AgentTaskListSchema.parse([

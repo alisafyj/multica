@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1884,6 +1885,7 @@ func (d *Daemon) reregisterWorkspaceAfterRuntimeGone(ctx context.Context, worksp
 	// because its surviving runtime IDs may still be actively executing
 	// tasks for the user (MUL-3332).
 	for _, rid := range newIDs {
+		d.reportRuntimeCapabilitiesAsync(ctx, rid)
 		if err := d.client.RecoverOrphans(ctx, rid); err != nil {
 			d.logger.Warn("recover-orphans after re-register failed",
 				"runtime_id", rid, "error", err)
@@ -2009,6 +2011,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		"workspaces_root", d.cfg.WorkspacesRoot,
 		"health_port", d.cfg.HealthPort,
 		"poll_interval", d.cfg.PollInterval,
+		"ws_claim_poll_interval", d.cfg.WSClaimPollInterval,
 		"heartbeat_interval", d.cfg.HeartbeatInterval,
 		"agent_timeout", d.cfg.AgentTimeout,
 		"idle_watchdog", d.cfg.AgentIdleWatchdog,
@@ -2076,6 +2079,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	taskWakeups := make(chan taskWakeup, 256)
 	go d.taskWakeupLoop(ctx, taskWakeups)
 	go d.heartbeatLoop(ctx)
+	go d.deviceHubWatchLoop(ctx)
+	go d.deviceHubFrameLoop(ctx)
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	if strings.HasPrefix(d.client.Token(), "mul_") {
@@ -4116,6 +4121,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context, reconcileProfiles bo
 		// at in_progress until the slow heartbeat sweeper or the in-flight
 		// task timeout (2.5h) kicks in.
 		for _, rid := range runtimeIDs {
+			d.reportRuntimeCapabilitiesAsync(ctx, rid)
 			if err := d.client.RecoverOrphans(ctx, rid); err != nil {
 				d.logger.Warn("recover-orphans failed", "runtime_id", rid, "error", err)
 			}
@@ -4322,6 +4328,11 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp.PendingLocalSkills != nil {
 		if rt := d.findRuntime(runtimeID); rt != nil {
 			go d.handleLocalSkillList(ctx, *rt, resp.PendingLocalSkills.ID)
+		}
+	}
+	if resp.PendingCapabilityScan != nil {
+		if rt := d.findRuntime(runtimeID); rt != nil {
+			go d.handleCapabilityScan(ctx, *rt, resp.PendingCapabilityScan.ID)
 		}
 	}
 	// Prefer the batch field (new backend); fall back to singular (old backend).
@@ -4683,6 +4694,50 @@ func (d *Daemon) reportLocalSkillListResult(ctx context.Context, rt Runtime, req
 	d.reportRuntimeResultWithRetry(ctx, "local_skill_list", rt.ID, requestID, func(ctx context.Context) error {
 		return d.client.ReportLocalSkillListResult(ctx, rt.ID, requestID, payload)
 	})
+}
+
+// handleCapabilityScan answers a server-side capability scan: probe the host
+// for test-execution capabilities and report them. The report is what makes a
+// `browser` or device requirement resolvable at dispatch; a runtime that has
+// never reported parks every run that declares one as blocked.
+func (d *Daemon) handleCapabilityScan(ctx context.Context, rt Runtime, requestID string) {
+	d.logger.Info("runtime capability scan requested", "runtime_id", rt.ID, "request_id", requestID)
+	d.reportRuntimeCapabilities(ctx, rt, requestID)
+}
+
+// reportRuntimeCapabilities probes and uploads the runtime's capabilities. An
+// empty requestID is the unsolicited report sent right after registration so a
+// fresh daemon becomes bindable without anyone pressing "scan".
+func (d *Daemon) reportRuntimeCapabilities(ctx context.Context, rt Runtime, requestID string) {
+	caps, err := listRuntimeCapabilities()
+	if err != nil {
+		// Probing never fails today; if it ever does, still report what we
+		// have so the server can retire capabilities that are gone.
+		d.logger.Warn("runtime capability probe failed", "runtime_id", rt.ID, "error", err)
+	}
+	if caps == nil {
+		caps = []runtimeCapabilitySummary{}
+	}
+	payload := map[string]any{
+		"capabilities": caps,
+		"device_hub":   probeDeviceHubSummary(ctx, deviceHubURL()),
+	}
+	if requestID != "" {
+		payload["request_id"] = requestID
+	}
+	d.reportRuntimeResultWithRetry(ctx, "capability_report", rt.ID, requestID, func(ctx context.Context) error {
+		return d.client.ReportRuntimeCapabilities(ctx, rt.ID, payload)
+	})
+}
+
+// reportRuntimeCapabilitiesAsync is the registration-time hook: report once in
+// the background for a runtime that just (re)registered.
+func (d *Daemon) reportRuntimeCapabilitiesAsync(ctx context.Context, runtimeID string) {
+	rt := d.findRuntime(runtimeID)
+	if rt == nil {
+		return
+	}
+	go d.reportRuntimeCapabilities(ctx, *rt, "")
 }
 
 // reportLocalSkillImportResult delivers an import-report to the server with
@@ -5196,7 +5251,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			continue
 		}
 
-		tasks, err := d.ClaimTasksWSFirst(pollerCtx, d.cfg.DaemonID, runtimeIDs, len(slots))
+		claimResult, err := d.claimTasksWSFirst(pollerCtx, d.cfg.DaemonID, runtimeIDs, len(slots))
 		if err != nil {
 			d.exitClaim()
 			releaseSlots(slots)
@@ -5208,6 +5263,7 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 			}
 			continue
 		}
+		tasks := claimResult.Tasks
 
 		// Dispatch each claimed task into a slot. activeTasks is incremented for
 		// every dispatched task BEFORE exitClaim so the auto-update barrier never
@@ -5255,14 +5311,54 @@ func (d *Daemon) runBatchPoller(pollerCtx, parentCtx context.Context, sem chan i
 		}
 
 		// If we filled every slot, more work may be queued — loop immediately.
-		// Otherwise wait for the next wakeup / poll interval.
+		// Otherwise wait for the next wakeup / poll interval. A connection that
+		// negotiated WS RPC receives task-available pushes, so this poll is only
+		// a missed-event safety net and can run less often. Claim errors retain
+		// the configured fallback cadence above.
 		if dispatched > 0 && dispatched == len(slots) {
 			continue
 		}
-		if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
+		if err := sleepWithContextOrWakeup(pollerCtx, d.taskClaimPollInterval(claimResult), wakeup); err != nil {
 			return
 		}
 	}
+}
+
+// taskClaimPollInterval returns the next missed-event safety poll. The longer
+// cadence is only safe when this exact claim response came from a server that
+// opted into scheduling hints; a missing hint covers old servers and uncertain
+// WS claims, both of which retain the normal fallback cadence. Downward-only
+// jitter keeps the default below the server's 3-minute empty-claim cache TTL
+// while preventing an idle fleet from polling in lockstep.
+func (d *Daemon) taskClaimPollInterval(result claimTasksResult) time.Duration {
+	if !d.wsRPC.supportsRPCV1() || !result.ClaimedOverWS || !result.ClaimPollHintSupported {
+		if d.cfg.PollInterval > 0 {
+			return d.cfg.PollInterval
+		}
+		return DefaultPollInterval
+	}
+	upperBound := d.cfg.WSClaimPollInterval
+	if upperBound <= 0 {
+		upperBound = DefaultWSClaimPollInterval
+	}
+	interval := downwardJitterDuration(upperBound)
+	if result.NextDeferredTaskAfterMillis > 0 {
+		untilDeferred := time.Duration(result.NextDeferredTaskAfterMillis) * time.Millisecond
+		if untilDeferred < interval {
+			interval = untilDeferred
+		}
+	}
+	return interval
+}
+
+func downwardJitterDuration(interval time.Duration) time.Duration {
+	minReduction := interval / 12
+	maxReduction := interval / 6
+	if minReduction <= 0 || maxReduction <= minReduction {
+		return interval
+	}
+	reduction := minReduction + time.Duration(rand.Int63n(int64(maxReduction-minReduction)+1))
+	return interval - reduction
 }
 
 func signalPollerWakeup(wakeup chan<- struct{}) {
@@ -5461,7 +5557,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		if err := d.reportTerminalTask(ctx, terminalTaskReport{
 			kind:          terminalTaskReportFail,
 			taskID:        task.ID,
-			errorMessage:  "runtime went offline before the task started",
+			errorMessage:  "runtime went offline before the run started",
 			failureReason: taskfailure.ReasonRuntimeOffline.String(),
 		}); err != nil {
 			d.logger.Error("fail task callback failed", "task", task.ID, "error", err)
@@ -5482,9 +5578,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		agentName = task.Agent.Name
 	}
 	if task.ChatSessionID != "" {
-		taskLog.Info("picked chat task", "chat_session", task.ChatSessionID, "agent", agentName, "provider", provider)
+		taskLog.Info("picked chat task", "chat_session", task.ChatSessionID, "agent", agentName, "provider", provider, "concise_mode", task.ConciseMode)
 	} else {
-		taskLog.Info("picked task", "issue", task.IssueID, "agent", agentName, "provider", provider)
+		taskLog.Info("picked task", "issue", task.IssueID, "agent", agentName, "provider", provider, "concise_mode", task.ConciseMode)
 	}
 	taskLog.Debug("task context",
 		"workspace_id", task.WorkspaceID,
@@ -5571,7 +5667,18 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
-	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	execution := d.newTaskExecution(runCtx, task, provider, taskLog)
+	executionCtx := context.WithValue(runCtx, taskExecutionContextKey{}, execution)
+	executionStatus := "failed"
+	defer func() {
+		execution.finish(taskExecutionOutcome(ctx, TaskResult{Status: executionStatus}, nil))
+	}()
+
+	result, err := d.runner.run(executionCtx, task, provider, slot, taskLog)
+	executionStatus = taskExecutionOutcome(runCtx, result, err)
+	// Failed preparation still has real result/failure reporting to measure;
+	// only phases actually entered are present (no synthetic execute phase).
+	execution.beginFinalize(executionStatus)
 	if errors.Is(context.Cause(ctx), errAuthenticationExpired) {
 		evidenceRecorder.finishFinalization(time.Now())
 		d.reportAuthenticationExpired(task.ID, result, taskLog)
@@ -5598,6 +5705,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	select {
 	case <-cancelledByPoll:
 		evidenceRecorder.finishFinalization(time.Now())
+		executionStatus = "cancelled"
 		taskLog.Info("task cancelled during execution, discarding result",
 			"branch_name", result.BranchName, "error", err)
 		// runner.run has returned, so the transcript flush is complete —
@@ -5675,6 +5783,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 		result = finalized
 	}
+	executionStatus = taskExecutionOutcome(runCtx, result, nil)
 
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
 
@@ -5685,6 +5794,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
 		evidenceRecorder.finishFinalization(time.Now())
+		executionStatus = "cancelled"
 		taskLog.Info("task cancelled during execution, discarding result",
 			"status", status, "error", err, "branch_name", result.BranchName)
 		// Same contract as the poll-cancelled path above: the transcript is
@@ -6348,10 +6458,10 @@ func sameExistingDir(a, b string) bool {
 	return os.SameFile(ai, bi)
 }
 
-func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv, provider, envWorkDir string, sessionHomeReachable bool, taskLog *slog.Logger) bool {
+func gateResumeToReachableSession(task *Task, taskCtx *execenv.TaskContextForEnv, provider, envWorkDir string, sessionHomeReachable, refusesMissingSessionCwd bool, taskLog *slog.Logger) bool {
 	var reachable bool
 	if providerUsesPiSessionFile(provider) {
-		reachable = piSessionFilePresent(task.PriorSessionID)
+		reachable = piSessionResumable(task.PriorSessionID, refusesMissingSessionCwd)
 	} else {
 		// Compare the directories, not the spelling. Reuse runs in the canonical
 		// path it validated and locked, which need not be character-identical to
@@ -6388,6 +6498,66 @@ func providerUsesPiSessionFile(provider string) bool {
 	return ok && desc.ProtocolFamily == "pi"
 }
 
+// piSessionResumable reports whether the backend can actually START from this
+// session. The transcript file always has to be there; whether its recorded
+// working directory also has to be there depends on the runtime, which is what
+// refusesMissingCwd carries (providerRefusesMissingSessionCwd).
+//
+// Checking only the file is what produced GH #8082: after the prior task's
+// worktree was reclaimed the file survived, the gate reported the session
+// reachable, and Pi exited 1 in under 200ms with no tool call and no output —
+// permanently, because the failed run records the same session id again and the
+// next claim serves the same stale pointer. That is the exact failure shape the
+// gate above exists to prevent; #7760 removed the protection for the Pi family
+// without replacing it with the key Pi actually validates.
+func piSessionResumable(sessionID string, refusesMissingCwd bool) bool {
+	if !piSessionFilePresent(sessionID) {
+		return false
+	}
+	return !refusesMissingCwd || piSessionCwdPresent(sessionID)
+}
+
+// providerRefusesMissingSessionCwd reports whether a runtime refuses to start
+// when the working directory recorded in the transcript no longer exists.
+//
+// This is deliberately NOT the same question as providerUsesPiSessionFile.
+// That one asks where the session lives — an independently addressed JSONL path
+// rather than a cwd-keyed store — and it is true for the whole Pi protocol
+// family. This one asks what the runtime does with the cwd it finds inside that
+// file, and the family does not agree:
+//
+//   - pi re-anchors a resumed run to the recorded cwd and hard-refuses when it
+//     is gone (GH #8082).
+//   - omp opens the transcript from an explicit --session path and falls back to
+//     the launch cwd instead; verified on v17.2.12, where the same transcript
+//     whose recorded cwd had been deleted resumed with exit 0 and ran in the
+//     launch directory.
+//
+// So the check must not be applied family-wide: doing that drops omp sessions
+// omp would have resumed cleanly, which is exactly the continuity loss #7760
+// set out to fix.
+//
+// builtinRuntime is why the provider name alone cannot answer this. A custom
+// runtime profile keeps its protocol family as the provider, so
+// `protocol_family: pi` with `command_name: <anything>` also arrives here as
+// "pi" while being an unrelated implementation — the same trap agent.Config's
+// BuiltinRuntime field documents. Only the provider's own discovered binary is
+// the CLI whose refusal was actually verified, so a custom command answers
+// false and keeps its session.
+//
+// False is the safe default in both directions — unknown Pi-family runtime,
+// and custom command. A runtime that refuses in the words the backend matches
+// (piResumeRefusedMarker) is still recovered by Result.ResumeRejected: one
+// wasted run and a fresh session, not the permanent loop this issue reported.
+// That backstop is a single phrase match and does not generalise to a refusal
+// worded differently — but it does cover the case this default is most likely
+// to be wrong about, a Pi-family runtime behaving like Pi. Guessing the other
+// way has no backstop at all: it silently discards history that was never in
+// danger, with nothing downstream to notice.
+func providerRefusesMissingSessionCwd(provider string, builtinRuntime bool) bool {
+	return builtinRuntime && provider == "pi"
+}
+
 // piSessionFilePresent proves there is persisted history to resume. It does
 // not claim the transcript is idle: the Pi backend takes an exclusive lock for
 // the complete child-process lifetime and reports a busy resume as rejected so
@@ -6398,6 +6568,76 @@ func piSessionFilePresent(sessionID string) bool {
 	}
 	info, err := os.Stat(sessionID)
 	return err == nil && info.Mode().IsRegular() && info.Size() > 0
+}
+
+// piSessionCwdPresent mirrors Pi's own startup check, deliberately condition
+// for condition, so the two cannot disagree about what "resumable" means a
+// second time. Pi refuses to start if and only if the transcript carries a
+// session header whose `cwd` is non-empty and does not exist on disk; with no
+// header, or an empty cwd, it falls back to the launch directory and starts
+// normally. Anything this predicate cannot read is therefore NOT evidence of a
+// refusal, and returns true: a false negative here silently discards healthy
+// conversation history, which is the regression #7760 set out to fix.
+//
+// Existence is the whole test — not "is a directory". Pi uses existsSync, which
+// is true for a plain file too, so demanding a directory would drop sessions Pi
+// would have accepted and re-open the same divergence from the other side.
+//
+// Note this says nothing about WHICH directory the resumed run will use. Pi
+// adopts the recorded cwd, so a session whose recorded cwd still exists but is
+// not this task's workdir resumes into the older directory. That is a separate
+// defect with a separate fix; this predicate deliberately keeps the existing
+// behaviour there rather than widening a crash fix into a semantic change.
+func piSessionCwdPresent(sessionID string) bool {
+	cwd, ok := piSessionRecordedCwd(sessionID)
+	if !ok || cwd == "" {
+		return true
+	}
+	_, err := os.Stat(cwd)
+	return err == nil
+}
+
+// piSessionHeaderScanLines bounds how far into a transcript we look for the
+// session header. Pi writes it as the first line at session creation, so the
+// answer is always line 1 in practice; the bound only stops a pathological or
+// hand-edited file from turning a cheap predicate into a full read of a
+// multi-megabyte transcript.
+const piSessionHeaderScanLines = 64
+
+// piSessionMaxHeaderLine caps a single scanned line. A transcript's later lines
+// carry whole assistant turns and can be far larger than bufio's 64KB default;
+// without this the scan would stop early with an error on a perfectly healthy
+// file.
+const piSessionMaxHeaderLine = 1 << 20
+
+// piSessionRecordedCwd returns the cwd recorded in the transcript's session
+// header. The bool reports whether a header was found at all — callers must
+// distinguish "no header" (Pi starts fine) from "header with an empty cwd"
+// (also fine), and neither from a real recorded directory.
+func piSessionRecordedCwd(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), piSessionMaxHeaderLine)
+	for i := 0; i < piSessionHeaderScanLines && scanner.Scan(); i++ {
+		var entry struct {
+			Type string `json:"type"`
+			Cwd  string `json:"cwd"`
+		}
+		// A malformed line is skipped rather than failing the scan: Pi itself
+		// tolerates unparseable entries when loading a transcript.
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if entry.Type == "session" {
+			return entry.Cwd, true
+		}
+	}
+	return "", false
 }
 
 // sessionHomeReachable reports whether a session recorded by a prior task on
@@ -7298,6 +7538,39 @@ func taskUsesDirectAgentMode(task Task, configuredDefault bool) bool {
 	return configuredDefault || task.ConciseMode
 }
 
+// buildTaskPrompt keeps configured direct mode on the direct renderer, including
+// its task-scoped safety context. Only task-level concise mode adds the concise
+// envelope; concise caps still apply independently in both cases.
+func buildTaskPrompt(task Task, provider string, configuredDirect bool, options ...PromptOption) string {
+	if configuredDirect {
+		return BuildDirectPrompt(task, options...)
+	}
+	if task.ConciseMode {
+		return buildConcisePrompt(task, options...)
+	}
+	return BuildPrompt(task, provider, options...)
+}
+
+// conciseMaxTurnsFor reports the turn cap for a run. The budget applies only
+// to runs the user explicitly opted into via task-level concise mode; a
+// daemon-wide DirectAgentMode default deliberately does not inherit it, and a
+// non-positive configured cap disables the limit entirely. Backends that do
+// not consume ExecOptions.MaxTurns ignore the value (claude and codebuddy
+// enforce it today).
+func conciseMaxTurnsFor(task Task, configured int) int {
+	if task.ConciseMode && configured > 0 {
+		return configured
+	}
+	return 0
+}
+
+func conciseMaxToolCallsFor(task Task, configured int) int {
+	if task.ConciseMode && configured > 0 {
+		return configured
+	}
+	return 0
+}
+
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
 	defer func() {
 		taskResult.ClaimAttempt = task.ClaimAttempt
@@ -7323,6 +7596,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.WorkspaceID == "" {
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
+	execution := taskExecutionFromContext(ctx)
+	execution.start()
 
 	prepareTimeout := d.effectiveTaskPrepareTimeout()
 	prepareCtx, cancelPrepare := context.WithTimeoutCause(ctx, prepareTimeout, errTaskPrepareTimeout)
@@ -7686,6 +7961,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var hermesEnv map[string]string
 	var hermesMemoryStore string
 	var hermesSessionStore string
+	var hermesModel string
+	if task.Agent != nil {
+		hermesModel = task.Agent.Model
+	}
 	if provider == "hermes" {
 		// Resolve from the argv hermes will actually parse — launch prefix,
 		// `acp`, then the filtered custom args — which agent.HermesLaunchArgv
@@ -7810,6 +8089,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSourceHome:      hermesSourceHome,
 			HermesSourceMustExist: hermesSourceMustExist,
 			HermesEnv:             hermesEnv,
+			HermesModel:           hermesModel,
 			HermesMemoryStore:     hermesMemoryStore,
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
@@ -7868,6 +8148,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSourceHome:      hermesSourceHome,
 			HermesSourceMustExist: hermesSourceMustExist,
 			HermesEnv:             hermesEnv,
+			HermesModel:           hermesModel,
 			HermesMemoryStore:     hermesMemoryStore,
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
@@ -8249,7 +8530,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
-	resumeReachable := gateResumeToReachableSession(&task, &taskCtx, provider, env.WorkDir, sessionHomeReachable(provider, env, envReused), taskLog)
+	// usesCustomProfileCommand is the same provenance the backend receives as
+	// agent.Config.BuiltinRuntime: it separates the provider's own discovered
+	// binary from an arbitrary command speaking its protocol. Reused here so
+	// the gate and the backend cannot disagree about which one is running.
+	resumeReachable := gateResumeToReachableSession(
+		&task, &taskCtx, provider, env.WorkDir,
+		sessionHomeReachable(provider, env, envReused),
+		providerRefusesMissingSessionCwd(provider, !usesCustomProfileCommand),
+		taskLog,
+	)
 	// A reused workdir is necessary but not sufficient for a Codex resume: the
 	// prior thread's rollout must actually be present in this task's CODEX_HOME
 	// sessions (MUL-4424 isolates them). Drop the resume before the brief is
@@ -8290,6 +8580,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if primaryRepository != nil {
 		promptOptions = append(promptOptions, WithPrimaryRepository(primaryRepository))
 	}
+	if d.cfg.ConciseOptimization && task.ConciseMode && !d.cfg.DirectAgentMode {
+		promptOptions = append(promptOptions, withConciseOptimization())
+	}
 	if localAssignment != nil && !localAssignment.UsesWorktree() && localDirectoryLockExempt(task) {
 		promptOptions = append(promptOptions, WithSharedLocalDirectory())
 	}
@@ -8305,12 +8598,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.LocalWorktree != nil && len(env.LocalWorktree.ReplayConflicts) > 0 {
 		promptOptions = append(promptOptions, WithWorktreeReplayConflicts(env.LocalWorktree.ReplayConflicts))
 	}
-	var prompt string
-	if directAgentMode {
-		prompt = BuildDirectPrompt(task, promptOptions...)
-	} else {
-		prompt = BuildPrompt(task, provider, promptOptions...)
-	}
+	prompt := buildTaskPrompt(task, provider, d.cfg.DirectAgentMode, promptOptions...)
 	prompt = primaryRepositoryPrompt(runtimeBrief, prompt, primaryRepository)
 
 	// Pass task-scoped auth credentials and context so the spawned agent CLI
@@ -8495,6 +8783,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		profileFixedArgs, hermesOverlayCustomArgs = agent.StripHermesProfileSelectors(
 			profileFixedArgs, rawCustomArgs, d.logger)
 	}
+	// Preparation includes environment/prompt/auth assembly. Execute begins
+	// before backend initialization and includes model negotiation, retries,
+	// provider execution, tools, transcript drain, and session flush.
+	execution.beginExecute()
+	defer func() {
+		// On startup/execute errors, enter finalization before registered env
+		// cleanup/worktree defers. Successful drains transition explicitly below.
+		execution.beginFinalize(taskExecutionOutcome(ctx, taskResult, returnErr))
+	}()
+
 	// Resolve the backend through the unified runtime resolver: built-in
 	// runtime identities (e.g. "omp") dispatch through NewRuntime, protocol
 	// families go through New. This is the single production boundary — the
@@ -8654,6 +8952,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		pendingInput := newPendingInputBroker(d.client.withDaemonToken(task.RemoteMCPDaemonToken), task.RuntimeID, task.ID, task.ClaimGeneration, pendingInputAnswerPollInterval)
 		execOpts.RequestUserInput = pendingInput.Request
 	}
+	// Concise-mode turn cap: gated on the task flag alone. A daemon-wide
+	// DirectAgentMode deployment keeps its uncapped behaviour — only runs the
+	// user explicitly opted into concise mode get the budget. Backends that do
+	// not consume MaxTurns (see ExecOptions docs) ignore it, mirroring
+	// ThinkingLevel's incremental adoption contract.
+	if turns := conciseMaxTurnsFor(task, d.cfg.ConciseMaxTurns); turns > 0 {
+		execOpts.MaxTurns = turns
+	}
+	// Daemon-side tool-call cap for concise mode, distinct from MaxTurns:
+	// one turn issues several tool calls, and the four ACP/event-stream
+	// backends without a native turn limit (pi, codex, grok, openclaw)
+	// enforce it by counting tool-call events and force-stopping the run.
+	if calls := conciseMaxToolCallsFor(task, d.cfg.ConciseMaxToolCalls); calls > 0 {
+		execOpts.MaxToolCalls = calls
+	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
 	//   - openclaw is pinned to the task workdir via the per-task config we
@@ -8802,12 +9115,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				return TaskResult{}, fmt.Errorf("cleanup runtime config for direct retry: %w", cerr)
 			}
 		}
-		var freshPrompt string
-		if directAgentMode {
-			freshPrompt = BuildDirectPrompt(task, promptOptions...)
-		} else {
-			freshPrompt = BuildPrompt(task, provider, promptOptions...)
-		}
+		freshPrompt := buildTaskPrompt(task, provider, d.cfg.DirectAgentMode, promptOptions...)
 		freshPrompt = primaryRepositoryPrompt(runtimeBrief, freshPrompt, primaryRepository)
 
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
@@ -8828,6 +9136,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		result, tools = reconcileFreshRetryResult(firstResult, firstUsage, firstTools, retryResult, retryTools, retryErr)
 	}
 	evidenceRecorder.finishExecution(time.Now(), result.ExecutionEvidence)
+	execution.observeToolCalls(tools)
 
 	elapsed := time.Since(taskStart).Round(time.Second)
 	taskLog.Info("agent finished",
@@ -8881,6 +9190,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// returns (SessionID is already blanked above); reportTaskResult forwards it
 	// as session_rollout_missing on the terminal callback (MUL-5305).
 	defer func() { taskResult.SessionRolloutMissing = sessionRolloutMissing }()
+	execution.beginFinalize(taskExecutionOutcome(ctx, TaskResult{Status: result.Status}, nil))
 
 	switch result.Status {
 	case "completed":
@@ -9061,14 +9371,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// fact.
 			failureReason = taskfailure.Classify(errMsg).String()
 		}
-		// After the classifiers above have read errMsg. The hint is fixed
+		// After the classifiers above have read errMsg. Each hint is fixed
 		// prose chosen to match none of the resume guards (see its const), so
 		// ordering is not what makes it safe — but it keeps the machine
 		// decisions reading exactly what the runtime reported, and leaves the
-		// annotation on the outside where a future edit is visibly a change to
-		// human-facing text rather than to classifier input.
+		// annotations on the outside where a future edit is visibly a change
+		// to human-facing text rather than to classifier input. They are
+		// mutually exclusive by provider, so they cannot stack.
 		errMsg = annotateHermesProviderUnconfigured(errMsg, provider, env.HermesHome != "")
 		errMsg = annotateAgentEnvironmentFailure(errMsg, failureReason, environmentDiagnostics)
+		errMsg = annotateCodexRetiredCompaction(errMsg, provider)
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       errMsg,
@@ -10199,6 +10511,68 @@ func annotateHermesProviderUnconfigured(errMsg, provider string, overlayActive b
 		return errMsg
 	}
 	return errMsg + hermesProviderUnconfiguredHint
+}
+
+// codexRetiredCompactionHint is appended verbatim to a Codex compaction
+// failure against the retired route. Like hermesProviderUnconfiguredHint
+// above it is a CONSTANT, for the same correctness reason — see
+// annotateCodexRetiredCompaction — and is worded to stay clear of every
+// phrase the resume guards and taskfailure.Classify match, since it is
+// persisted in agent_task_queue.error and re-scanned there indefinitely.
+// TestCodexCompactionAnnotationCannotChangeMachineDecisions pins that.
+//
+// It names every place the setting can be off, because being a constant means
+// it cannot know which one applied. The shared config is the common case and
+// the only one the upstream reports mention, but the launch arguments reach
+// the same state: nothing strips `--disable remote_compaction_v2` or
+// `-c features.remote_compaction_v2=false` out of an agent's custom args, a
+// daemon's extra args, or a custom runtime profile's launch prefix — only
+// fast_mode gets that treatment, and only when a service tier is selected.
+// Naming just the file would send anyone in that case to edit a line that is
+// not there, which is the failure mode this hint exists to prevent.
+//
+// For the same reason the closing line excludes only the generated per-task
+// copy, rather than claiming nothing on the Multica side needs changing. Once
+// the hint sends people to look at custom_args, a daemon's extra args, or a
+// profile's fixed args, "nothing to change here" contradicts the instruction
+// directly above it and strands exactly the users the argument half was added
+// for. The per-task copy is the one target that is genuinely wrong to edit: it
+// is rebuilt from the shared config every run, so an edit there is discarded.
+const codexRetiredCompactionHint = " [multica] codex could not compact this conversation: it called a " +
+	"compaction endpoint OpenAI has retired. That route is selected by turning `remote_compaction_v2` " +
+	"off, so look in both places it can be off: `[features]` in the codex config this agent uses " +
+	"(~/.codex/config.toml by default), and the codex launch arguments on the agent, the daemon, or a " +
+	"custom runtime profile (`--disable remote_compaction_v2`, `-c features.remote_compaction_v2=false`). " +
+	"Remove it wherever it appears — or set it to true — and run this task again; both sources are re-read " +
+	"on the next run. The one place not to edit is the per-task codex config this run used: it is " +
+	"regenerated from your shared one every run, so a change there is lost. A thread stuck this way " +
+	"continues where it left off once compaction works."
+
+// annotateCodexRetiredCompaction explains a retired-route compaction failure
+// that Codex itself cannot explain.
+//
+// Codex reports the failing URL and status and stops there. The setting that
+// chose that URL — `remote_compaction_v2` — appears nowhere in the text, so the
+// error names no file, no key and no remedy; the reporter in GH #8000 had to
+// open an issue to learn the fix was deleting one line. Nor does the failure
+// resolve on its own: the conversation stays above the auto-compact threshold,
+// so every following turn retries the same retired call.
+//
+// Text only. This changes no reason, status, or control flow — in particular
+// it does NOT retire the session. That is a deliberate choice, not an
+// omission: unlike the resume-unsafe failures classified above, this thread is
+// recoverable, and it recovers by itself once the setting is right. Dropping
+// the session pointer would discard the conversation the fix brings back.
+//
+// Scoped to the codex provider, which is exactly the set of runs that can
+// produce this text (only "codex" resolves to codexBackend), so the check
+// costs nothing and keeps a lookalike string from another runtime out.
+func annotateCodexRetiredCompaction(errMsg, provider string) string {
+	if strings.ToLower(strings.TrimSpace(provider)) != "codex" ||
+		!agent.CodexRetiredCompactionError(errMsg) {
+		return errMsg
+	}
+	return errMsg + codexRetiredCompactionHint
 }
 
 func layerCustomEnvAndHermesHome(agentEnv, customEnv map[string]string, overlayHome string, logger *slog.Logger) {

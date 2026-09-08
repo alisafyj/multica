@@ -27,10 +27,10 @@ func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatChannelType == execenv.ChannelTypeSlack {
 		return execenv.SessionContinuityNoticeChannelHistory
 	}
-	// Every other chat session that persists a transcript (web chat, Feishu,
-	// WeCom, DingTalk) reads it back via `multica chat history`; Slack alone
-	// reads the live channel. Only a surface that never stored a transcript
-	// falls through to Unrecoverable — see SurfacePersistsTranscript.
+	// Transcript-backed sessions remain recoverable via `multica chat history`.
+	// Feishu topic tasks additionally learn their native bound-topic reader in
+	// the chat prompt. Only a surface without a stored transcript falls through
+	// to Unrecoverable — see SurfacePersistsTranscript.
 	if execenv.SurfacePersistsTranscript(task.ChatChannelType) {
 		return execenv.SessionContinuityNoticeChatTranscript
 	}
@@ -90,10 +90,15 @@ type promptOpts struct {
 	outputDir               string
 	worktreeReplayConflicts []string
 	primaryRepository       *preparedPrimaryRepository
+	conciseOptimization     bool
 }
 
 // PromptOption tunes per-turn prompt copy with run-scoped context.
 type PromptOption func(*promptOpts)
+
+func withConciseOptimization() PromptOption {
+	return func(o *promptOpts) { o.conciseOptimization = true }
+}
 
 // WithSharedLocalDirectory marks a turn that runs inside the user's own
 // directory WITHOUT holding its path mutex — today, a chat turn on an in_place
@@ -346,6 +351,127 @@ func buildDirectAgentWorkspaceContext(task Task) string {
 	return b.String()
 }
 
+// buildConcisePrompt keeps task-level concise runs direct, but restores the
+// small amount of context and execution discipline that a full runtime brief
+// normally provides. The daemon-wide direct-mode escape hatch remains
+// untouched: only an explicit ConciseMode task uses this wrapper.
+func buildConcisePrompt(task Task, options ...PromptOption) string {
+	kind := concisePromptKind(task)
+	body := BuildDirectPrompt(task, options...)
+	if kind == "" {
+		// Raw task-specific payloads already carry their own contract. Do not
+		// prefix identity, suffix policy, or append per-turn text to them.
+		return body
+	}
+
+	var opts promptOpts
+	for _, apply := range options {
+		apply(&opts)
+	}
+	contract := buildConciseExecutionContract(task, kind)
+	optimization := ""
+	if opts.conciseOptimization {
+		optimization = conciseOptimizationGuidance
+	}
+
+	var b strings.Builder
+	b.Grow(len(body) + len(contract) + len(optimization) + 2)
+	b.WriteString(body)
+	if !strings.HasSuffix(body, "\n\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString(contract)
+	b.WriteString(optimization)
+	return b.String()
+}
+
+// concisePromptKind mirrors BuildDirectPrompt's precedence. Specialized
+// context payloads remain exact pass-throughs; operational flows get the
+// compact contract and run-scoped safety blocks.
+func concisePromptKind(task Task) string {
+	switch {
+	case task.ChatSessionID != "":
+		return "chat"
+	case task.TriggerCommentID != "":
+		return "comment"
+	case task.AutopilotRunID != "":
+		return "autopilot"
+	case task.QuickCreatePrompt != "":
+		return "quick_create"
+	case len(task.UIDraftCreateContext) > 0,
+		len(task.DesignRestoreContext) > 0,
+		testingContextPresent(task.TestGenerationContext),
+		testingContextPresent(task.TestRunContext),
+		len(task.DesignSystemProfileAnalyzeContext) > 0,
+		len(task.TemplateBlueprintAnalyzeContext) > 0,
+		len(task.ProjectDesignSystemContext) > 0,
+		len(task.DesignDocumentContext) > 0,
+		len(task.DesignDeliveryContext) > 0,
+		len(task.PMOSyncContext) > 0:
+		return ""
+	case task.IssueID != "", task.HandoffNote != "":
+		return "assignment"
+	default:
+		return ""
+	}
+}
+
+func buildConciseExecutionContract(task Task, kind string) string {
+	var b strings.Builder
+	// Reserve the common scaffold; this is a capacity hint, not an input limit.
+	b.Grow(1536)
+	b.WriteString("## Concise execution\n\n")
+	b.WriteString("Bounded run: task input and relevant issue/chat context are the source of truth.\n")
+	b.WriteString("- Follow the flow-specific read, verification, and delivery contract above exactly. Validated snapshots or proofs replace only the reads they explicitly satisfy; do not add redundant reads or duplicate manual delivery.\n")
+	b.WriteString("- In a checked-out repo, read existing root `./AGENTS.md` / `./CLAUDE.md` and applicable nested instruction files on the target path; do not recursively enumerate them. Never search parent directories outside the repo, runtime metadata (`.agent_context`, `.multica`, `.pi`), or skill catalogs for workflow. Open only task-relevant named resources/assigned skills.\n")
+	b.WriteString("- The flow-specific commands above are complete; do not load generic Multica workflow skills merely to restate them.\n")
+	b.WriteString("- Start narrow: inspect only relevant files/history. Bound tool output with fields/line ranges; after truncation, fetch only missing ranges, not the same full output.\n")
+	if kind == "assignment" && task.IssueID != "" && len(task.ActiveSiblingRuns) > 0 {
+		b.WriteString("- For sibling coordination, scan comment roots once as required by the flow-specific catch-up above.\n")
+		b.WriteString("- Reuse this scan for sibling claims. The sibling list is a snapshot: before handing off or waiting, check `multica issue runs <issue-id> --siblings --output json`; use `multica issue run-messages <task-id> --since <last-seq>` for follow-ups.\n")
+	}
+	switch kind {
+	case "assignment":
+		b.WriteString("- Use `in_progress` only if substantive work remains; skip the transient status for an immediate read-only answer. Follow the flow-specific final outcome contract for review or blocked transitions.\n")
+	case "comment":
+		if task.IssueID != "" && buildAuthoritativeIssueSnapshotBlock(task) == "" {
+			fmt.Fprintf(&b, "- First read the issue with `multica issue get %s --output json`; use the supplied trigger and coalesced comments before fetching anything else.\n", task.IssueID)
+		} else {
+			b.WriteString("- Use the supplied trigger, coalesced comments, and any validated issue snapshot before fetching anything else.\n")
+		}
+		if len(task.CoalescedComments) == 0 && len(task.CoalescedCommentIDs) > 0 && task.IssueID != "" {
+			fmt.Fprintf(&b, "- Resolve only the supplied comment IDs with `multica issue comment list %s --thread <comment-id> --tail 30 --compact --output json`; do not pull unrelated history.\n", task.IssueID)
+		}
+	case "chat":
+		b.WriteString("- Use the supplied chat message and attachments first; fetch only a specific missing detail.\n")
+	case "autopilot":
+		b.WriteString("- Use the autopilot description and trigger payload as task input; do not invent follow-up work.\n")
+	case "quick_create":
+		b.WriteString("- Use the selected fields and create exactly one issue; do not query or comment on an issue that does not exist yet.\n")
+	}
+	b.WriteString("- Never background work and yield; collect required tool results in this run.\n")
+	b.WriteString("- Make the smallest complete change and run one focused verification. Stop when the acceptance criteria are met; no unrelated cleanup.\n")
+	switch kind {
+	case "chat":
+		b.WriteString("- Return the final answer through the requested chat surface; do not post progress chatter.\n")
+	case "autopilot", "quick_create":
+		b.WriteString("- Follow the flow's exact output and delivery contract; do not add progress chatter or follow-up work.\n")
+	default:
+		b.WriteString("- Follow the task's final outcome instructions exactly; do not post progress chatter.\n")
+	}
+	return b.String()
+}
+
+const conciseOptimizationGuidance = `
+## Concise optimization
+
+- Handle known small scopes inline. Decompose only with at least two substantive independent slices; do not delegate trivial lookup, editing, or cleanup. Preserve explicitly requested plans/parallel work and all required tests and acceptance validation; focused verification is not a substitute for them.
+- Reuse supplied context and required initial reads. Fetch other issues or additional history only to close a concrete task-relevant gap.
+- Prepare only tools required by the task or repository instructions. For necessary GitNexus, run ` + "`multica repo tool-status gitnexus --path <checkout> --output json`" + ` once for that checkout. This read-only inspector never installs or indexes. Reuse a ready index only while checkout, revision, analyzer identity, and repository content remain unchanged; after a change, recheck readiness before relying on it.
+- If not ready, attempt at most one specifically authorized targeted repair, then recheck status once. Unsupported versions or unavailable required tools are constraints to report, not invitations to try repeated help/install/index commands. Never silently bypass mandatory repository tools; if readiness cannot be established, report the constraint and what is needed to proceed.
+- For other required tools, inspect preparation once and allow at most one specifically authorized targeted correction followed by one recheck, not a setup retry loop. These are execution guidelines, not additional daemon-enforced limits. Existing identity, privacy, repository instructions, safety boundaries, and complete delivery requirements still apply.
+`
+
 func buildDirectChatPrompt(task Task) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Chat session: %s\n", task.ChatSessionID)
@@ -358,9 +484,21 @@ func buildDirectChatPrompt(task Task) string {
 		fmt.Fprintf(&b, ", %s", task.ChatType)
 	}
 	if task.ChatInThread {
-		b.WriteString(", thread reply")
+		if task.ChatChannelType == execenv.ChannelTypeFeishu {
+			b.WriteString(", bound topic")
+		} else {
+			b.WriteString(", thread reply")
+		}
 	}
-	b.WriteString("\n\nUser message:\n")
+	b.WriteString("\n\n")
+	if task.ChatChannelType == execenv.ChannelTypeFeishu {
+		if task.ChatInThread {
+			b.WriteString("Read this task's bound Feishu topic with `multica chat thread --output json` when you need source messages or earlier context. It returns native `om_` message IDs; use those IDs, not transcript IDs. Do not pass another topic ID or look up sibling topics.\n\n")
+		} else {
+			b.WriteString("Read earlier conversation context with `multica chat history --output json`; this task has no bound Feishu topic.\n\n")
+		}
+	}
+	b.WriteString("User message:\n")
 	b.WriteString(task.ChatMessage)
 	b.WriteByte('\n')
 	if len(task.ChatMessageAttachments) > 0 {
@@ -448,7 +586,7 @@ func buildDirectCommentPrompt(task Task) string {
 		b.WriteString("rm ./reply.md\n")
 	}
 	if taskIsSquadLeader(task) {
-		fmt.Fprintf(&b, "If no action is needed, run `multica squad activity %s no_action --reason \"...\"` and do not post a comment.\n", task.IssueID)
+		b.WriteString("For a `no_action` outcome, follow the no_action rule in your Squad Operating Protocol.\n")
 	}
 	return b.String()
 }
@@ -628,9 +766,8 @@ func buildPromptBody(task Task, provider string, outputDir string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	// Assignment handoff (MUL-3375): a free-text instruction the person who
-	// assigned/promoted this issue left for you. Frame it as a handoff, not a
-	// comment to reply to — there is no comment thread to answer here.
+	// Assignment handoff is run-scoped data from legacy clients. Keep it in the
+	// per-turn prompt rather than the cached runtime brief (MUL-5377).
 	if task.HandoffNote != "" {
 		b.WriteString("You were handed this issue with a handoff note. Treat it as the assigner's scoping instruction for this run; follow it before doing anything broader, and do not reply to it as if it were a comment:\n\n")
 		fmt.Fprintf(&b, "> %s\n\n", task.HandoffNote)
@@ -887,6 +1024,9 @@ func buildDesignSystemProfileAnalyzePrompt(task Task) string {
 // devices the server already bound to this run: probing the host for an adb or
 // a browser would silently escape the capability contract.
 func buildTestRunPrompt(task Task) string {
+	if runCase := testRunCaseFromContext(string(task.TestRunContext)); runCase.RunCaseID != "" {
+		return buildTestRunCasePrompt(task, runCase)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a QA engineer executing one test round for a Multica workspace.\n\n")
 
@@ -924,6 +1064,68 @@ func buildTestRunPrompt(task Task) string {
 	b.WriteString("End your final response with a machine-readable JSON block prefixed by exactly `TEST_RUN_RESULT_JSON:`:\n")
 	b.WriteString("{\"status\":\"completed|blocked\",\"summary\":\"one paragraph\",\"blockers\":[]}\n")
 	b.WriteString("Per-case results must already be recorded through `multica test result set`; this block only closes the round.\n")
+	return b.String()
+}
+
+// testRunCaseRef is the per-case part of a test_run context (TS-021).
+type testRunCaseRef struct {
+	RunID     string `json:"run_id"`
+	RunCaseID string `json:"run_case_id"`
+	CaseKey   string `json:"case_key"`
+}
+
+func testRunCaseFromContext(raw string) testRunCaseRef {
+	var ref testRunCaseRef
+	if strings.TrimSpace(raw) == "" {
+		return ref
+	}
+	_ = json.Unmarshal([]byte(raw), &ref)
+	return ref
+}
+
+// buildTestRunCasePrompt drives ONE case of a round. The snapshot is inlined
+// in the context JSON, so the agent needs no lookup before its first
+// screenshot; results and evidence still go through the authenticated CLI.
+// The phone rules restate what the hub enforces (frame-pixel coordinates,
+// effect verdicts, budgets) because a model that knows the contract wastes
+// fewer actions discovering it.
+func buildTestRunCasePrompt(task Task, ref testRunCaseRef) string {
+	label := ref.CaseKey
+	if label == "" {
+		label = ref.RunCaseID
+	}
+	var b strings.Builder
+	b.WriteString("You are running as a QA engineer executing exactly ONE test case (" + label + ") of a Multica test round.\n\n")
+
+	b.WriteString("What you have:\n")
+	b.WriteString("- The frozen case is `case_snapshot` in the context JSON below: `steps[]` with `action` and `expected`, `preconditions`, `expected_result`, `test_data`. Execute the SNAPSHOT, not the live case.\n")
+	b.WriteString("- `run_case_id` is the id you record against. `run_id` is the round; other cases of the round run in parallel in their own tasks — do not touch them.\n")
+	b.WriteString("- The MCP servers mounted for this task are the only devices you may drive: `multica-browser` for a browser, `multica-device` for an Android phone. `multica test capability list --run <run_id> --output json` shows what was bound.\n\n")
+
+	b.WriteString("Driving a phone through `multica-device`:\n")
+	b.WriteString("- Call `device_info` first, then `screenshot`. Every coordinate you send is in pixels of the LAST screenshot you received; take a new one after anything that could have moved the UI.\n")
+	b.WriteString("- Every action returns `effect`: `changed` (read the new frame), `unchanged` (the tap did nothing visible — pick a different target once; three unchanged actions on the same screen means you are stuck: stop and report where), `unknown` (take a screenshot).\n")
+	b.WriteString("- Prefer `launch_app` with a package name, `press_key` for back/home, `scroll` with the direction you want to SEE, `type_text` after tapping the field. Budget: about 30 actions for this case.\n")
+	b.WriteString("- Keep evidence with `save_screenshot` into ./evidence/, then `multica test evidence add <run_case_id> --file <path> --kind screenshot`.\n")
+	b.WriteString("- Never type into a password field, complete a payment, install from outside the store, or change system settings the case does not ask for. If the phone is unavailable (`no_device`, `device_offline`, `approval_*`), record `blocked` with the code and stop.\n\n")
+
+	b.WriteString("Recording:\n")
+	b.WriteString("```\n")
+	b.WriteString("multica test result set <run_case_id> --result passed|failed|blocked|skipped [--note \"…\"] [--step-results '<json>']\n")
+	b.WriteString("multica test evidence add <run_case_id> --file ./evidence/step-3.jpg --kind screenshot\n")
+	b.WriteString("multica test defect open <run_case_id> --title \"…\"\n")
+	b.WriteString("```\n")
+	b.WriteString("- `failed` means the product behaved differently from `expected`; open a defect for it. `blocked` means the case could not run (no device, missing precondition, login wall); it is NOT a synonym for failed. `skipped` means it did not apply.\n")
+	b.WriteString("- Do NOT record `passed` unless you observed every step's expected result on a frame. Attach at least one screenshot for `failed` and `blocked`, and the final frame for `passed`.\n")
+	b.WriteString("- Do NOT modify product code or open pull requests; you are observing behaviour. Use the `multica` CLI for every Multica read and write.\n\n")
+
+	b.WriteString("Context JSON:\n")
+	b.Write(task.TestRunContext)
+	b.WriteString("\n\n")
+
+	b.WriteString("End your final response with a machine-readable line prefixed by exactly `TEST_RUN_CASE_RESULT_JSON:`:\n")
+	b.WriteString("{\"result\":\"passed|failed|blocked|skipped\",\"summary\":\"one paragraph: what you observed on the final frame and why that is the verdict\"}\n")
+	b.WriteString("The CLI write above is the record; this line only lets the platform settle the case if the write never happened.\n")
 	return b.String()
 }
 
@@ -1079,7 +1281,6 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("     CC exception: `multica issue create` has no `--subscriber` flag, and the platform auto-subscribes members whose `[@Name](mention://member/<uuid>)` link appears in the description. When the user wrote \"cc @Y\", strip the verbal \"cc\" wrapper from the User request body and append a final `CC: <mention link(s)>` line to the description so the cc routing still fires.\n\n")
 	b.WriteString("  2. **Context** — include ONLY when the input cited external resources AND you successfully fetched them AND they produced verifiable facts worth recording. Summarize facts only (e.g. \"PR #45 changes auth to JWT\"), not interpretation or unsolicited reference implementations. If you have nothing factual to add, omit the section entirely — never use it as an apology log for resources you could not fetch.\n\n")
 	b.WriteString("  Hard rules: never invent requirements, implementation details, or acceptance criteria the user did not express; never reduce multi-sentence input to a single vague sentence; never echo the title.\n\n")
-	b.WriteString("  Passing the description: a short, single-line body with no code, quotes, backticks, `$()`, or other special characters may go inline via `--description \"...\"`. Anything multi-line, or containing code snippets / file paths / quotes / backticks / `$()` / special characters, or otherwise long — which quick-create descriptions usually are — MUST be written to `./description.md` and passed with `--description-file ./description.md`; passing rich text inline lets the shell rewrite or truncate it (MUL-2904). That file MUST live inside your current working directory (e.g. `./description.md`) — never `/tmp` or any machine-shared path, where a different run may have left a stale file that would silently become this issue's description. If the file write fails for any reason, stop and fix it; never run `--description-file` against a file whose write did not succeed.\n\n")
 
 	// priority
 	if task.QuickCreatePriority != "" {
@@ -1149,13 +1350,11 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("- **status**: omit (defaults to `todo`).\n")
 	b.WriteString("- **attachments**: `--attachment` takes LOCAL file paths, never URLs. Image URLs in the user input are already markdown — keep them inline. Files you produced: see `## Output`.\n\n")
 
-	// output format
-	b.WriteString("Output format:\n")
-	b.WriteString("- Run exactly one `multica issue create --output json` invocation. Do not retry for any reason — even on non-zero exit. The issue may already exist; another attempt would create a duplicate.\n")
-	b.WriteString("- Parse the JSON response to read the created issue's `identifier` (preferred) or `id` (fallback). Do not scrape human output and do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
-	b.WriteString("- After success, print exactly one line: `Created <identifier-or-id>: <title>` and exit. No commentary, no follow-up tool calls.\n")
-	b.WriteString("- Do NOT call `multica issue get` or `multica issue comment add` — there is no issue to query or comment on.\n")
-	b.WriteString("- On CLI error or JSON parse error, exit with the error as the only output. The platform writes a failure notification automatically.\n")
+	// How to run the create and what to print is stated once, in the brief's
+	// quick-create Workflow section (execenv.writeWorkflowQuickCreate). Those
+	// rules hold for the whole run and must survive a missing user message, so
+	// the brief is their home; this function renders only the field VALUES the
+	// modal picked, which change every run.
 	return b.String()
 }
 
@@ -1254,9 +1453,6 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "Fetch each id you still need directly: `multica issue comment list %s --thread <comment-id> --tail 30 --compact --output json`. `--thread` accepts a reply id, not just a thread root, so you do not need to know which thread the comment lives in. If it is older than those 30 replies, page back with the `Next reply cursor` values (`--before` / `--before-id`) until it appears. Do not finish this turn until every id above is accounted for.\n\n",
 				task.IssueID)
 		}
-		if taskIsSquadLeader(task) {
-			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise. The comment prohibition is conditional on that call SUCCEEDING: if it exits non-zero, your decision has no trace anywhere, so post exactly ONE short comment stating the outcome and the error instead of exiting silently. That failure comment is this turn's only comment — it does not license a second one.\n\n", task.IssueID)
-		}
 	}
 	if snapshot := buildAuthoritativeIssueSnapshotBlock(task); snapshot != "" {
 		b.WriteString(snapshot)
@@ -1295,7 +1491,10 @@ func buildRequiredCommentCatchUpPrompt(task Task) string {
 		}
 	}
 	if task.TriggerCommentID != "" && task.PriorSessionID != "" && !task.PriorSessionResumeUnavailable {
-		return execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID)
+		if task.NewCommentsDeltaKnown {
+			return execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID)
+		}
+		return execenv.BuildResumedUnknownDeltaCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID)
 	}
 
 	var b strings.Builder
@@ -1406,10 +1605,9 @@ func buildChatPrompt(task Task) string {
 	// The history half: `multica chat history` is served by handler/chat_history.go,
 	// which reads the live channel for Slack and falls back to the stored
 	// chat_message transcript for every other surface — so Slack, Feishu, WeCom
-	// and DingTalk can all read the conversation back. Slack additionally has
-	// `multica chat thread` (thread expansion); the transcript surfaces have no
-	// thread reader, so they get the transcript command without the thread
-	// drill-down (MUL-4899).
+	// and DingTalk can all read the conversation back. `multica chat thread`
+	// expands Slack threads and reads a Feishu task's immutable bound topic
+	// with native message IDs. Other transcript surfaces have no thread reader.
 	//
 	// WHERE the conversation lives is therefore per-branch, not shared: only the
 	// unconditional "don't go looking in issues/comments" survives up top. Saying
@@ -1439,6 +1637,8 @@ func buildChatPrompt(task Task) string {
 			// into a chat reply reads as noise (the user reported every reply being
 			// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
 			b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer.\n")
+		} else if task.ChatChannelType == execenv.ChannelTypeFeishu && task.ChatInThread {
+			b.WriteString("This task is bound to a Feishu topic, including when the trigger is its root message. Read source messages and earlier topic context with `multica chat thread --output json`. The reader returns native `om_` message IDs; use those IDs for source-message references, not Multica transcript IDs. It reads only this task's bound topic: do not pass another topic ID or look up sibling topics. Gather this context silently.\n")
 		} else if execenv.SurfacePersistsTranscript(task.ChatChannelType) {
 			fmt.Fprintf(&b, "The conversation happens in %s, and Multica stores a transcript of it. The message below may be only what triggered you — read it back with `multica chat history` when you need earlier context that is not below.\n", platform)
 		} else {
@@ -1508,7 +1708,7 @@ func buildChatPrompt(task Task) string {
 	// nobody and the agent must say so in words. The answer arrives on the
 	// claim; do not re-derive it from the channel type, do not collapse it back
 	// into "is there a channel at all", and do not collapse it into the HISTORY
-	// layer above, which is Slack-only and asks a different question.
+	// layer above, which asks a different question.
 	//
 	// This is the ONLY place the verdict is stated. The brief's `## Output`
 	// section carries the web/mobile answer, which is fixed, and for a
@@ -1549,8 +1749,16 @@ func buildAutopilotPrompt(task Task) string {
 	if task.AutopilotSource != "" {
 		fmt.Fprintf(&b, "Trigger source: %s\n", task.AutopilotSource)
 	}
-	if strings.TrimSpace(string(task.AutopilotTriggerPayload)) != "" {
-		fmt.Fprintf(&b, "Trigger payload:\n%s\n", strings.TrimSpace(string(task.AutopilotTriggerPayload)))
+	// Rendered whole. Ingress already bounds it — handler.maxWebhookBodyBytes
+	// caps a webhook body at 256 KiB — and this is now the payload's ONLY
+	// rendering (it used to be in the runtime brief as well), so truncating
+	// here would drop task input the agent has no way to fetch back: the
+	// full-payload read exists on the server (GET /api/autopilots/{id}/runs/
+	// {runId}) but no CLI command exposes it, and `autopilot runs` lists runs
+	// without payloads. A cap belongs with that command and a threshold picked
+	// from real payload sizes, not as a side effect of de-duplication.
+	if payload := strings.TrimSpace(string(task.AutopilotTriggerPayload)); payload != "" {
+		fmt.Fprintf(&b, "Trigger payload:\n%s\n", payload)
 	}
 	b.WriteString("\nAutopilot instructions:\n")
 	if strings.TrimSpace(task.AutopilotDescription) != "" {

@@ -2642,7 +2642,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           its latest recorded outcome. Self-contained and hides itself when the
           issue has no linked cases, so workspaces that do not use the testing
           surface see nothing. */}
-      <IssueTestCoverage issueId={id} />
+      <IssueTestCoverage issueId={id} projectId={issue.project_id} issueTitle={issue.title} />
 
       {/* Execution log — active runs + collapsed past runs, each carrying its
           own token spend, with the issue total on the section header.

@@ -90,7 +90,7 @@
   "health": {
     "online": {
       "label": "온라인",
-      "description": "최근 45초 안에 heartbeat를 받았습니다. 작업을 디스패치할 준비가 되었습니다."
+      "description": "최근 45초 안에 heartbeat를 받았습니다. 실행을 디스패치할 준비가 되었습니다."
     },
     "recently_lost": {
       "label": "최근 연결 끊김",
@@ -149,11 +149,11 @@
       },
       "cascade": {
         "title_other": "에이전트 {{count}}개의 런타임 연결을 해제하고 이 런타임을 삭제할까요?",
-        "description": "\"{{name}}\"을 삭제합니다. 아래 에이전트는 유지되며 지침, 채팅, 작업 기록도 그대로 남습니다. 다만 런타임 연결이 해제되어 다른 런타임에 연결할 때까지 실행할 수 없습니다. 대기 중이거나 실행 중인 작업은 취소되고, 그다음 런타임이 삭제됩니다.",
-        "warning": "대기 중과 실행 중인 작업은 취소되며, 런타임에 연결하기 전까지 이 에이전트에 새 작업을 할당할 수 없습니다.",
+        "description": "\"{{name}}\"을 삭제합니다. 아래 에이전트는 유지되며 지침, 채팅, 실행 기록도 그대로 남습니다. 다만 런타임 연결이 해제되어 다른 런타임에 연결할 때까지 실행할 수 없습니다. 대기 중이거나 진행 중인 실행은 취소되고, 그다음 런타임이 삭제됩니다.",
+        "warning": "대기 중과 진행 중인 실행은 취소되며, 런타임에 연결하기 전까지 이 에이전트에 새 작업을 할당할 수 없습니다.",
         "notice_runtime_has_active_agents": "이 대화상자를 연 뒤 활성 에이전트가 추가되었습니다. 새 계획을 확인한 뒤 승인하세요.",
         "notice_runtime_delete_plan_changed": "대화상자가 열린 동안 활성 에이전트 목록이 바뀌었습니다. 새 계획을 확인한 뒤 승인하세요.",
-        "checkbox_other": "이 에이전트 {{count}}개의 런타임 연결이 해제되어 런타임에 연결할 때까지 실행할 수 없고, 대기 중이거나 실행 중인 작업이 취소된다는 점을 이해했습니다.",
+        "checkbox_other": "이 에이전트 {{count}}개의 런타임 연결이 해제되어 런타임에 연결할 때까지 실행할 수 없고, 대기 중이거나 진행 중인 실행이 취소된다는 점을 이해했습니다.",
         "cancel": "취소",
         "confirm_other": "에이전트 {{count}}개 연결 해제 후 런타임 삭제",
         "submitting": "연결 해제 후 삭제 중...",
@@ -179,7 +179,39 @@
     "toast_deleted": "런타임을 삭제했습니다",
     "toast_delete_failed": "런타임을 삭제하지 못했습니다",
     "running_chip_other": "· 실행 중 {{count}}개",
-    "queued_chip_other": "· 대기 중 {{count}}개"
+    "queued_chip_other": "· 대기 중 {{count}}개",
+    "capabilities_title": "테스트 기능",
+    "capabilities_empty": "아직 보고된 브라우저나 기기가 없습니다.",
+    "capabilities_hint": "데몬은 이 머신이 테스트 실행에서 제어할 수 있는 항목을 보고합니다. 여기에 없는 종류가 필요한 실행은 디스패치 시 차단됩니다.",
+    "capabilities_scan": "다시 스캔",
+    "capabilities_scanning": "스캔 중…",
+    "capabilities_scan_requested": "스캔을 요청했습니다. 데몬이 보고하면 결과가 표시됩니다.",
+    "capabilities_scan_failed": "스캔을 요청할 수 없습니다.",
+    "capabilities_probed": "{{when}} 탐지",
+    "capability_kind": {
+      "browser": "브라우저",
+      "android_device": "Android 기기",
+      "ios_device": "iOS 기기",
+      "computer_use": "컴퓨터 제어"
+    },
+    "capability_status": {
+      "available": "사용 가능",
+      "busy": "사용 중",
+      "offline": "오프라인",
+      "unknown": "알 수 없음"
+    },
+    "device_hub_title": "디바이스 허브",
+    "device_hub_test_host": "테스트 호스트",
+    "device_hub_test_host_hint": "이 머신의 디바이스 허브가 보고한 기기를 테스트 실행이 조작할 수 있게 합니다.",
+    "device_hub_online": "허브 {{version}} 온라인",
+    "device_hub_offline": "이 머신에 디바이스 허브가 없습니다",
+    "device_hub_offline_hint": "이 머신에서 `multica-device-mcp hub`를 실행하면 데몬이 다음 보고 때 감지합니다.",
+    "device_hub_counts": "기기 {{devices}} · 앱 {{phones}} · 리스 {{leases}}",
+    "device_hub_show_pairing": "페어링 코드 표시",
+    "device_hub_hide_pairing": "페어링 코드 숨기기",
+    "device_hub_pairing_hint": "Multica 앱의 더보기 → 디바이스 실행기에서 스캔하거나 URL을 붙여넣으세요.",
+    "device_hub_reported": "{{when}} 보고됨",
+    "device_hub_toggle_failed": "테스트 호스트 설정을 업데이트하지 못했습니다."
   },
   "detail_page": {
     "not_found_title": "런타임을 찾을 수 없습니다",
@@ -205,7 +237,7 @@
     "copy_aria": "복사",
     "cancel": "취소",
     "success_title": "컴퓨터 연결됨",
-    "success_description": "컴퓨터가 온라인이며 준비되었습니다. 에이전트를 만들면 여기서 작업을 맡을 수 있습니다.",
+    "success_description": "컴퓨터가 온라인이며 준비되었습니다. 에이전트를 만들면 여기서 실행을 시작할 수 있습니다.",
     "view_runtime": "런타임 보기",
     "create_agent": "에이전트 만들기"
   },

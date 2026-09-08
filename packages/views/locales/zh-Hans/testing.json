@@ -118,6 +118,23 @@
     "crossRepoNeedsRepos": "跨仓库用例至少需要关联两个仓库",
     "crossRepoNeedsRoles": "跨仓库用例的仓库角色不能全部相同"
   },
+  "capabilities": {
+    "title": "所需能力",
+    "empty": "该用例不需要浏览器或设备。",
+    "add": "添加能力",
+    "remove": "移除此能力",
+    "kind": "类型",
+    "match": "匹配条件",
+    "matchPlaceholder": "os_version=>=13, browser=chromium",
+    "optional": "可选——缺少时不阻塞轮次",
+    "hint": "这里声明的类型会在派发时绑定到真实的浏览器或设备；runtime 提供不了时，轮次会被停为阻塞。",
+    "kinds": {
+      "browser": "浏览器",
+      "android_device": "Android 设备",
+      "ios_device": "iOS 设备",
+      "computer_use": "电脑控制"
+    }
+  },
   "role": {
     "under_test": "被测",
     "driver": "驱动",
@@ -329,7 +346,15 @@
       "description": "描述",
       "deletePlan": "删除计划",
       "confirmDelete": "确定删除这个测试计划吗？",
-      "unknownCase": "用例已不存在"
+      "unknownCase": "用例已不存在",
+      "parallelism": "并行数",
+      "parallelismPlaceholder": "全部同时",
+      "board": "看板",
+      "boardEmpty": "还没有执行轮次",
+      "passRate": "通过率",
+      "matrixTitle": "最近一轮的模块结果",
+      "moduleColumn": "模块",
+      "moduleUnnamed": "（未分模块）"
     }
   },
   "run": {
@@ -349,7 +374,8 @@
       "plan": "关联计划",
       "executor": "执行人",
       "started": "开始时间",
-      "completed": "完成时间"
+      "completed": "完成时间",
+      "parallelism": "并行数"
     },
     "counts": {
       "passed": "通过",
@@ -403,7 +429,10 @@
       "defect": "缺陷"
     },
     "saveNotes": "保存备注",
-    "notesNeedResult": "备注会随结果一起保存，请先选择结果。"
+    "notesNeedResult": "备注会随结果一起保存，请先选择结果。",
+    "task": "任务 {{id}}",
+    "liveFrame": "实时画面",
+    "liveFrameWaiting": "等待设备中枢传来第一帧…"
   },
   "timeline": {
     "title": "历史执行记录",
@@ -412,7 +441,9 @@
     "result": "结果",
     "environment": "环境",
     "buildRef": "构建版本",
-    "executedAt": "执行时间"
+    "executedAt": "执行时间",
+    "flaky": "不稳定",
+    "flakyHint": "最近 {{count}} 轮的结果在通过与失败之间反复"
   },
   "runs": {
     "title": "执行轮次",
@@ -450,6 +481,23 @@
     "newPlan": "新建计划…",
     "confirm": "加入"
   },
+  "recommend": {
+    "action": "按改动推荐",
+    "title": "改动涉及的用例",
+    "description": "粘贴改动的文件路径，每行一个。仓库绑定声明了这些路径的用例会列出来，命中越多越靠前。",
+    "paths": "改动路径",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "仓库别名（可选）",
+    "find": "查找用例",
+    "finding": "查找中…",
+    "empty": "没有用例声明这些路径。请在用例的仓库绑定里补充路径通配。",
+    "claimed": "命中 {{count}} 个路径",
+    "unmatched": "{{count}} 个路径没有任何用例声明",
+    "select": "在列表中选中",
+    "startRun": "发起执行",
+    "runTitle": "针对 {{count}} 个改动路径的回归",
+    "runFailed": "无法发起执行"
+  },
   "coverage": {
     "caseSection": "关联需求",
     "caseEmpty": "还没有关联需求",
@@ -463,6 +511,17 @@
     "pickerDescription": "选择这条用例所验证的需求。",
     "neverRun": "未执行",
     "failingCount": "{{count}} 条失败",
-    "untestedCount": "{{count}} 条未执行"
+    "untestedCount": "{{count}} 条未执行",
+    "verified": "已验证",
+    "verifiedHint": "所有关联用例在最近一次执行中全部通过",
+    "latestRun": "最近一轮",
+    "defectsSection": "测试发现的缺陷",
+    "foundBySection": "由测试轮次发现",
+    "generateCases": "生成用例",
+    "newCase": "新建用例",
+    "newCaseTitle": "验证：{{title}}",
+    "noCoverage": "暂无测试覆盖",
+    "generateFailed": "无法发起用例生成",
+    "newCaseFailed": "无法创建用例"
   }
 }

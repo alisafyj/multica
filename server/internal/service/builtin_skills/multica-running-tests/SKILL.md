@@ -8,9 +8,8 @@ allowed-tools: Bash(multica *)
 # Running Tests
 
 This skill covers what a Multica test run is, how to drive it from the CLI,
-and what the platform enforces. Every claim is pinned in
-`references/running-tests-source-map.md`; when behavior differs from this
-document, the source map is where to re-check it.
+and what the platform enforces. When behavior differs from this document, the
+CLI's own `--help` and the run's JSON output are the authority.
 
 ## 1. Discover capabilities first, always
 
@@ -120,7 +119,65 @@ This transitions the run from `pending` to `running`. The agent normally
 receives a run that has already been dispatched to `running` status; call
 `run start` only if status is `pending`.
 
-## 7. Test plans (informational)
+## 7. One task, one case
+
+Since per-case dispatch a round is executed as one agent task per case. Your
+task's context JSON names it:
+
+A round may carry a parallelism cap: the server queues only that many case tasks at once and releases the next one when yours settles, so finishing (or blocking) your case promptly is what lets the round advance.
+
+```json
+{"type": "test_run", "run_id": "…", "run_case_id": "…", "case_key": "TC-42",
+ "case_snapshot": {"steps": [...], "preconditions": "…", "expected_result": "…"},
+ "capability_binding": {"resolved": {"android_device": "android:…"}}}
+```
+
+- Execute `case_snapshot` and nothing else. Sibling cases run in their own
+  tasks, possibly on other phones, at the same time.
+- Record against `run_case_id` with `multica test result set`. The round
+  completes by itself once every case is terminal; you never close it.
+- End with `TEST_RUN_CASE_RESULT_JSON:{"result":"passed|failed|blocked|skipped","summary":"…"}`.
+  The CLI write is the record; the line only settles the case if the write
+  never happened.
+
+## 8. Driving a phone: the `multica-device` MCP server
+
+When the binding resolves `android_device`, the task mounts `multica-device`
+(the multica-device-mcp connector, leased to a phone on the test host's
+device hub). Its tools and rules:
+
+| Tool | Use |
+| --- | --- |
+| `device_info` | first call: model, Android version, screen, current app, serving track |
+| `screenshot` | before every decision; coordinates you send afterwards are pixels of THIS frame |
+| `tap` `double_tap` `long_press` `swipe` `scroll` | gestures; `scroll` takes the direction you want to see |
+| `type_text` | after tapping the field; refused on password fields |
+| `press_key` `launch_app` `stop_app` `open_url` `wait` | the rest |
+| `a11y_tree` | UI tree; bounds are physical pixels — divide by `scale_factor` |
+| `save_screenshot` | write the last frame to a file, then `multica test evidence add` |
+
+Every action returns `effect`: `changed` (read the new frame), `unchanged`
+(the action did nothing visible — try one other target; three unchanged
+actions on one screen means stuck: stop and report), `unknown` (screenshot).
+Budget about 30 actions per case. `no_device`, `device_offline`,
+`approval_denied`, `approval_timeout`, `approval_requires_app` mean the phone
+is not available: record `blocked` with the code and stop.
+
+Never type into a password field, complete a payment, install from outside
+the store, or change system settings the case does not ask for.
+
+`ios_device` mounts the same connector, leased to an iPhone on the test host
+(driven by PulsePhone on that Mac). Same tools, with these differences:
+`launch_app` needs the bundle id in `package` (`stop_app` and `open_url` are
+unavailable); `press_key` has `home`, `recents` (app switcher), volume,
+`power` (lock) and `enter` but no `back` (use the app's own Back or Close
+control from `a11y_tree`, or `home` to leave an unknown state); `a11y_tree`
+is on-device element recognition of the visible viewport (`cls` `text` or
+`controlCandidate`, possibly `degraded`), not an accessibility tree; touch
+needs iOS 17+. Take a screenshot before the first tap: the frame fixes the
+coordinate space.
+
+## 9. Test plans (informational)
 
 Test plans group cases into a named release scope. You can read them but you
 do not modify plans during a run:
@@ -141,5 +198,7 @@ do not modify plans during a run:
   `failed` or `blocked` case where the environment permits it.
 - **Frozen snapshot is authoritative**: do not re-read the live test case
   record mid-run. The run has the snapshot it was dispatched with.
+- **One task, one case**: record only against your own `run_case_id`; the
+  round completes on its own.
 - **One defect per scenario**: do not open duplicate defect issues for the
   same reproduction path.

@@ -7,22 +7,35 @@ import (
 
 func TestWorkingOnIssuesSkillKeepsCoreSmallAndDetailsLoadable(t *testing.T) {
 	const (
-		detailsPath       = "references/pr-and-status-details.md"
-		maxBodyLines      = 260
-		maxBodyBytes      = 13_000
-		maxReferenceLines = 190
-		maxReferenceBytes = 9_500
+		issuesPath        = "references/issues.md"
+		maxCoreLines      = 110
+		maxCoreBytes      = 6_500
+		maxReferenceLines = 420
+		maxReferenceBytes = 22_000
 	)
 
-	skill, ok := findSkill(t, "multica-working-on-issues")
+	skill, ok := findSkill(t, PlatformSkillName)
 	if !ok {
 		return
 	}
-	_, body, _ := splitFrontmatter(skill.Content)
-	details := supportingFileContent(t, skill, detailsPath)
+	_, core, _ := splitFrontmatter(skill.Content)
+	issues := supportingFileContent(t, skill, issuesPath)
 
-	assertTextBudget(t, "SKILL.md body", body, maxBodyLines, maxBodyBytes)
-	assertTextBudget(t, detailsPath, details, maxReferenceLines, maxReferenceBytes)
+	assertTextBudget(t, "multica-platform/SKILL.md body", core, maxCoreLines, maxCoreBytes)
+	assertTextBudget(t, issuesPath, issues, maxReferenceLines, maxReferenceBytes)
+
+	for _, want := range []string{
+		"open the reference(s) your task actually needs",
+		"Do not read them all",
+		issuesPath,
+		"Writes are real",
+		"`--no-start` when you are only recording",
+		"Comment reads stay bounded",
+	} {
+		if !containsUnwrapped(core, want) {
+			t.Errorf("compact platform core missing routing or safety contract %q", want)
+		}
+	}
 
 	for _, want := range []string{
 		"Default for code-changing issue work",
@@ -31,22 +44,11 @@ func TestWorkingOnIssuesSkillKeepsCoreSmallAndDetailsLoadable(t *testing.T) {
 		"user explicitly asked for a local-only change or no PR",
 		"report that blocker instead of pretending the run is complete",
 		"include the PR URL when a PR exists",
-		"references/pr-and-status-details.md",
-		"references/working-on-issues-source-map.md",
 		"MULTICA_ISSUE_OUTCOME_FILE",
-		"completion contract for the final status and delivery",
+		"managed completion contract for final status and delivery",
 		"do not duplicate it with a CLI comment",
 		"available for deliberate state changes",
-		"A successful process exit alone does not",
-		"establish review readiness",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("compact working-on-issues body missing core contract or load link %q", want)
-		}
-	}
-
-	joint := body + "\n" + details
-	for _, want := range []string{
+		"successful process exit alone does not establish review readiness",
 		"title, body, OR branch",
 		"title or body only",
 		"never the branch",
@@ -56,24 +58,26 @@ func TestWorkingOnIssuesSkillKeepsCoreSmallAndDetailsLoadable(t *testing.T) {
 		"snapshot_available == true",
 		"Only then does `checks_rollup == null` mean \"no checks\"",
 		"There is no separate `draft` or `merged` boolean",
-		"`backlog` parks an agent-assigned issue",
-		"`cancelled` enqueue nothing",
-		"no active task or retry remains",
-		"custom terminal status can still enqueue at creation",
+		"**`backlog`** parks an agent-assigned issue",
 		"does **not** stop tasks already in flight",
-		"not `StartTask` / `CompleteTask` side effects",
+		"no active task / retry remains",
+		"custom terminal status can still enqueue at creation",
+		"not automatic side effects of a task starting or finishing",
 		"delivered the issue's own ask",
 		"produces none of the issue's own deliverable",
 		"dispatching members is not delivery",
-		"`todo` starts work now, `backlog` parks it",
+		"multica issue assign <issue-id> --to-id <agent-id> --no-start",
+		"multica issue runs <issue-id> --siblings --output json",
+		"Nothing here reserves an issue or serialises anything",
+		"todo starts work now, backlog parks it",
 		"when a whole stage finishes",
 		"one implicit stage",
 		"Advancement is agent-driven",
 		"multica issue status <stage-2-child-id> todo",
 		"status_category",
 	} {
-		if !strings.Contains(joint, want) {
-			t.Errorf("working-on-issues body plus details missing contract %q", want)
+		if !containsUnwrapped(issues, want) {
+			t.Errorf("%s missing operational contract %q", issuesPath, want)
 		}
 	}
 }

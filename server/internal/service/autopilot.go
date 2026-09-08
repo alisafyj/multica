@@ -40,6 +40,8 @@ type AutopilotService struct {
 	TaskSvc      *TaskService
 	Entitlements entitlement.Provider
 	QuotaMetrics AutopilotQuotaMetrics
+	// TestRuns serves the test_run execution mode; wired by the handler.
+	TestRuns AutopilotTestRunLauncher
 }
 
 // DefaultAutopilotTriggerTimezone is the timezone used to render Autopilot
@@ -67,6 +69,7 @@ type autopilotRuleConfigSummary struct {
 	AssigneeID    string `json:"assignee_id"`
 	Status        string `json:"status"`
 	ExecutionMode string `json:"execution_mode"`
+	TestPlanID    string `json:"test_plan_id,omitempty"`
 }
 
 // RecordAutopilotRuleVersion appends one rule-version snapshot for a substantive
@@ -82,6 +85,7 @@ func RecordAutopilotRuleVersion(ctx context.Context, q *db.Queries, ap db.Autopi
 		AssigneeID:    util.UUIDToString(ap.AssigneeID),
 		Status:        ap.Status,
 		ExecutionMode: ap.ExecutionMode,
+		TestPlanID:    util.UUIDToString(ap.TestPlanID),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal rule version config summary: %w", err)
@@ -135,13 +139,20 @@ func (s *AutopilotService) DispatchAutopilot(
 	return run, err
 }
 
-// DispatchAutopilotManual is the "run now" entry point for a member manually
-// triggering an autopilot. Scheduled / webhook / api dispatch acts as the firing
-// trigger's creator (MUL-6951); a manual trigger is a direct human action by the
-// CLICKER instead, so it need not consult the trigger at all: the run is
-// attributed direct_human to actorUserID, which becomes BOTH its originator
-// (authorization) and accountable human (MUL-4302 §4), across both execution modes.
-// An invalid actorUserID behaves exactly like DispatchAutopilot(source="manual").
+// DispatchAutopilotManual is the "run now" entry point for a manual trigger.
+// Scheduled / webhook / api dispatch acts as the firing trigger's creator
+// (MUL-6951); a manual trigger is a direct human action by the human who ORDERED
+// it instead, so it need not consult the trigger at all: the run is attributed
+// direct_human to actorUserID, which becomes BOTH its originator (authorization)
+// and accountable human (MUL-4302 §4), across both execution modes.
+//
+// actorUserID is that ordering human — the clicking member, or, when an agent
+// triggers on someone's behalf, the originator it acts for. The HTTP entry point
+// resolves and authorizes it (handler.requireAutopilotTriggerInvoker) and refuses
+// the request outright when no human resolves, so a manual dispatch reaching here
+// with an invalid actorUserID has no principal at all. It then behaves exactly
+// like DispatchAutopilot(source="manual") and, having no trigger to fall back to,
+// is refused by the admission gate (#8078).
 func (s *AutopilotService) DispatchAutopilotManual(
 	ctx context.Context,
 	autopilot db.Autopilot,
@@ -611,6 +622,17 @@ func (s *AutopilotService) dispatchAutopilotRun(
 			}
 			return run, dispatchFailReasonCode(err), fmt.Errorf("dispatch run_only: %w", err)
 		}
+	case "test_run":
+		if err := s.dispatchTestRun(ctx, autopilot, run, actorUserID); err != nil {
+			if skipped, code := s.handleDispatchSkip(ctx, autopilot, run, err); skipped != nil {
+				return skipped, code, nil
+			}
+			if failedRun, ok := s.failRun(ctx, run.ID, err.Error()); ok {
+				*run = failedRun
+				s.captureAutopilotRunFailed(autopilot, failedRun, source, err.Error())
+			}
+			return run, dispatchFailReasonCode(err), fmt.Errorf("dispatch test_run: %w", err)
+		}
 	default:
 		reason := "unknown execution_mode: " + autopilot.ExecutionMode
 		if failedRun, ok := s.failRun(ctx, run.ID, reason); ok {
@@ -623,7 +645,7 @@ func (s *AutopilotService) dispatchAutopilotRun(
 	// Update last_run_at on the autopilot.
 	s.Queries.UpdateAutopilotLastRunAt(ctx, autopilot.ID)
 
-	if autopilot.ExecutionMode == "run_only" {
+	if autopilot.ExecutionMode == "run_only" || autopilot.ExecutionMode == "test_run" {
 		s.publishRunStart(autopilot, *run, source)
 	}
 
@@ -1001,37 +1023,33 @@ type errDispatchSkipped struct {
 
 func (e *errDispatchSkipped) Error() string { return e.reason }
 
-// dispatchRunOnly enqueues a direct agent task without creating an issue.
-//
-// For squad autopilots, the executing agent is the squad leader resolved at
-// trigger time (Path A from MUL-2429). The same archived / runtime-bound /
-// runtime-online gates that the upstream admission check (shouldSkipDispatch)
-// applies also run here as belt-and-braces: if the leader changed between
-// admission and dispatch, or the runtime went offline in the gap, we still
-// fail closed instead of enqueueing a doomed task.
-func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, actorUserID pgtype.UUID) error {
+// admitAutopilotAgent is the post-admission gate shared by the modes that
+// hand work straight to an agent (run_only, test_run): resolve the leader,
+// check its readiness, apply the private-squad invocation gate, and resolve
+// the run's attribution. Every refusal is a typed skip or a dispatch error.
+func (s *AutopilotService) admitAutopilotAgent(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, actorUserID pgtype.UUID) (db.Agent, attribution.Result, error) {
 	agent, _, err := s.resolveAutopilotLeader(ctx, ap)
 	if err != nil {
 		// Same admission-vs-failure classification as shouldSkipDispatch:
 		// if the row disappeared or the squad was archived between
 		// admission and dispatch, that is a skip, not a failure.
 		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errSquadArchived) {
-			return &errDispatchSkipped{reason: formatAdmissionReason(ap, "assignee no longer resolvable"), code: dispatch.ReasonTargetUnavailable}
+			return db.Agent{}, attribution.Result{}, &errDispatchSkipped{reason: formatAdmissionReason(ap, "assignee no longer resolvable"), code: dispatch.ReasonTargetUnavailable}
 		}
-		return fmt.Errorf("resolve leader: %w", err)
+		return db.Agent{}, attribution.Result{}, fmt.Errorf("resolve leader: %w", err)
 	}
 	verdict, err := AgentReadiness(ctx, s.runtimeLookup(), agent)
 	if err != nil {
-		return fmt.Errorf("check agent readiness: %w", err)
+		return db.Agent{}, attribution.Result{}, fmt.Errorf("check agent readiness: %w", err)
 	}
 	if !verdict.Ready() {
-		return &errDispatchSkipped{reason: formatAdmissionReason(ap, verdict.Detail), code: verdict.Reason}
+		return db.Agent{}, attribution.Result{}, &errDispatchSkipped{reason: formatAdmissionReason(ap, verdict.Detail), code: verdict.Reason}
 	}
 
 	// Fail-closed invocation gate for squad autopilots (admission principal =
 	// manual clicker, else creator — see autopilotAdmitInvoke).
 	if ap.AssigneeType == "squad" && !s.autopilotAdmitInvoke(ctx, ap, agent, actorUserID, run.TriggerID) {
-		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "not allowed to invoke private squad leader"), code: dispatch.ReasonInvocationNotAllowed}
+		return db.Agent{}, attribution.Result{}, &errDispatchSkipped{reason: formatAdmissionReason(ap, "not allowed to invoke private squad leader"), code: dispatch.ReasonInvocationNotAllowed}
 	}
 
 	// Attribution splits on the trigger only to pick WHICH human and which source
@@ -1058,7 +1076,23 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 	// workspace is fail-closed (MUL-4302 §3.5).
 	autopilotAttr, err = s.TaskSvc.applyAttributionFallback(ctx, autopilotAttr, agent)
 	if err != nil {
-		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "workspace fail-closed: no accountable human for autopilot run"), code: dispatch.ReasonAttributionBlocked}
+		return db.Agent{}, attribution.Result{}, &errDispatchSkipped{reason: formatAdmissionReason(ap, "workspace fail-closed: no accountable human for autopilot run"), code: dispatch.ReasonAttributionBlocked}
+	}
+	return agent, autopilotAttr, nil
+}
+
+// dispatchRunOnly enqueues a direct agent task without creating an issue.
+//
+// For squad autopilots, the executing agent is the squad leader resolved at
+// trigger time (Path A from MUL-2429). The same archived / runtime-bound /
+// runtime-online gates that the upstream admission check (shouldSkipDispatch)
+// applies also run here as belt-and-braces: if the leader changed between
+// admission and dispatch, or the runtime went offline in the gap, we still
+// fail closed instead of enqueueing a doomed task.
+func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, actorUserID pgtype.UUID) error {
+	agent, autopilotAttr, err := s.admitAutopilotAgent(ctx, ap, run, actorUserID)
+	if err != nil {
+		return err
 	}
 	apSource, _, apEvidenceKind, apEvidenceRef := attributionCreateParams(autopilotAttr)
 	task, err := s.Queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
@@ -1432,17 +1466,25 @@ func (s *AutopilotService) shouldSkipDispatch(ctx context.Context, ap db.Autopil
 	}
 	// Invocation gate at the autopilot layer (MUL-3963 / MUL-4525). The
 	// admission principal depends on how the dispatch was triggered: a MANUAL
-	// "run now" (actorUserID valid) is a direct human action gated by the
-	// current CLICKER's access — not the autopilot creator's — so admission and
-	// attribution credit the same member and never fork. Automation (schedule /
-	// webhook / api, actorUserID invalid) preserves that same property by
-	// resolving the trigger's creator, which is also the human the run will act
-	// as (MUL-6951). Admins do NOT bypass a private agent they do not own;
-	// agent-created autopilots are judged as workspace principals. For squad
+	// "run now" (actorUserID valid) is a direct human action gated by the human
+	// who ORDERED it — the clicking member, or the originator an agent acts for,
+	// resolved by the handler (requireAutopilotTriggerInvoker) — not the
+	// autopilot creator's, so admission and attribution credit the same human and
+	// never fork. Automation (schedule / webhook, actorUserID invalid) preserves
+	// that same property by resolving the trigger's creator, which is also the
+	// human the run will act as (MUL-6951). Admins do NOT bypass a private agent
+	// they do not own, and no branch admits a principal-less dispatch. For squad
 	// autopilots the gate runs against the resolved leader.
 	if !s.autopilotAdmitInvoke(ctx, ap, agent, actorUserID, triggerID) {
 		if actorUserID.Valid {
 			return "you are not allowed to trigger this autopilot's assignee agent", dispatch.ReasonInvocationNotAllowed, true
+		}
+		if !triggerID.Valid {
+			// No actor AND no trigger: there is no trigger row whose owner could be
+			// at fault, so the trigger phrasing below would name a thing that does
+			// not exist. That message on the manual path is what sent #8078 hunting
+			// for a broken trigger owner for a day.
+			return "this dispatch resolved no authorizing human and carries no trigger to resolve one from", dispatch.ReasonInvocationNotAllowed, true
 		}
 		return "this trigger's owner lacks access to the private assignee agent, or the trigger records no owner", dispatch.ReasonInvocationNotAllowed, true
 	}

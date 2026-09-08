@@ -15,6 +15,7 @@ import {
   useDispatchTestRun,
   useUpdateTestRunCaseResult,
   useOpenTestRunCaseDefect,
+  useTestRunCaseLiveFrame,
 } from "@multica/core/testing";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { TestRunCase, TestRunCaseResult, DispatchTestRunBlockedResponse } from "@multica/core/types";
@@ -291,6 +292,12 @@ export function TestRunDetail({ runId }: { runId: string }) {
                     <div>
                       {t(($) => $.run.meta.buildRef)}:{" "}
                       <span className="text-foreground">{run.build_ref}</span>
+                    </div>
+                  ) : null}
+                  {typeof run.parallelism === "number" && run.parallelism > 0 ? (
+                    <div>
+                      {t(($) => $.run.meta.parallelism)}:{" "}
+                      <span className="text-foreground">{run.parallelism}</span>
                     </div>
                   ) : null}
                   {run.started_at ? (
@@ -581,11 +588,26 @@ function RunCaseRow({
         <Badge variant={resultVariant(runCase.result)} className="shrink-0 text-caption">
           {t(($) => $.run.result[runCase.result as keyof typeof $.run.result]) ?? runCase.result}
         </Badge>
+        {/* Per-case dispatch: each case has its own agent task. The short id
+            is what the daemon log and the hub audit line are keyed by. */}
+        {runCase.agent_task_id ? (
+          <span
+            className="shrink-0 font-mono text-micro text-muted-foreground"
+            title={runCase.agent_task_id}
+          >
+            {t(($) => $.runCase.task, { id: runCase.agent_task_id.slice(0, 8) })}
+          </span>
+        ) : null}
       </div>
 
       {/* Expanded detail */}
       {expanded ? (
         <div className="border-t border-border bg-muted/20 px-4 py-3 space-y-3">
+          {/* Live frame: what the agent's phone shows right now, relayed by the
+              daemon from the device hub while the case task runs. */}
+          {runCase.result === "running" && runCase.agent_task_id ? (
+            <LiveFrame runCaseId={runCase.id} />
+          ) : null}
           {/* Notes */}
           <div>
             <label className="mb-1 block text-caption font-medium text-muted-foreground">
@@ -670,6 +692,30 @@ function RunCaseRow({
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** The device hub's last frame of a running case; blank until the first relay. */
+function LiveFrame({ runCaseId }: { runCaseId: string }) {
+  const { t } = useT("testing");
+  const { url, capturedAt } = useTestRunCaseLiveFrame(runCaseId, true);
+  return (
+    <div>
+      <div className="mb-1 text-caption font-medium text-muted-foreground">
+        {t(($) => $.runCase.liveFrame)}
+        {capturedAt ? (
+          <span className="ml-2 font-normal text-micro">
+            {new Date(capturedAt).toLocaleTimeString()}
+          </span>
+        ) : null}
+      </div>
+      {url ? (
+        // An object URL that changes every few seconds; an optimising image component cannot serve it.
+        <img src={url} alt="" className="max-h-80 rounded-md border border-border bg-black/80" />
+      ) : (
+        <p className="text-micro text-muted-foreground">{t(($) => $.runCase.liveFrameWaiting)}</p>
+      )}
     </div>
   );
 }

@@ -75,6 +75,16 @@ make check            # Full verification pipeline
    - 后端日志：migration / ERR / FTL / panic / daemon heartbeat
    - caddy 与 multica-iworker.service 状态；20s 后稳定性复检、磁盘、回滚产物清单
 
+### 发布版本与验收硬规则
+
+- **社区基座独立于 fork 版本**：禁止从 `0.x.y-sso.n` 去掉后缀来推断基座。对目标提交执行 `git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude 'v*-sso*' --exclude 'desktop-*' --abbrev=0 <目标sha>`，取其可达社区 tag；无法确定时先补齐 tag/历史，不猜版本。
+- **构建必须写入版本元数据**：显式传入 `VERSION`、`COMMIT`、`DATE`、`UPSTREAM_VERSION`，并确认最终 compose 覆盖配置没有清空构建参数。`UPSTREAM_VERSION` 为空会导致 `/api/config` 不返回 `upstream_version`，帮助菜单的“社区基座版本”随之隐藏；不是前端菜单被删除。
+- **部署后逐项核验**：`/health.commit` 必须匹配目标提交；`/api/config.server_version` 与 `upstream_version` 必须分别匹配发布版本、经 Git 验证的基座。健康接口通过不等于 UI 通过；菜单需实际浏览器验收，无法验收时明确说明。
+- **后端、daemon、桌面版本分别记录**：后端升级不代表 worker/CLI 升级。daemon 更新后检查 `multica version` 的版本与 commit，以及实际 daemon 状态；真实任务必须有最终落库的 `execution_metrics`，不能只凭版本字符串或任务 completed 宣称遥测通过。
+- **归档校验后才能安装**：仅对下载的目标 OS/架构归档匹配官方 `checksums.txt` 对应行，同时核对发布资产字节数与 SHA-256；传到远端后再次校验。超时残留不得解包；用独立临时文件或断点续传，成功退出也不能替代大小/hash 校验。保留旧可执行文件，确认无运行中任务再替换。
+- **协议变更同步切换**：后端与 CLI 契约不兼容时一起升级，保留配套回滚；PRD 草稿统一使用 `draft --source-message --content-file`，不能搭配旧的委派生成接口。Mika 和小码是同一个智能体，直接在当前 task 生成草稿；保留 Hermes 等当前 runtime，不代绑身份、不伪造确认。
+- **交付与证据分开**：本地修正不等于远端已交付，提交/PR/合并/发布/部署分别报告。暂存只列业务文件，排除 `.agents/skills/**`、`.superpowers/**` 等本地工具产物。Token 总量注明是否包含缓存读写，费用无账单或可核验单价时不推断；测试通过不替代真实群聊草稿、人工确认与文档回链验收。
+
 ### PR 提交流程（fork）
 
 - PR 建到本仓库（`coder-zkl1988/multica`）自己的 `main`，不要建到 `multica-ai/multica`。
@@ -86,30 +96,31 @@ See CLAUDE.md for the complete command reference.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **multica** (50795 symbols, 152869 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **multica** (117980 symbols, 447293 relationships, 1061 execution flows).
 
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST run impact analysis before editing.** Use `impact({target: "symbolName", direction: "upstream"})` (MCP) or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .` (CLI fallback); report callers, processes, and risk. Never substitute grep for graph analysis.
+- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
 - When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
 - For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER edit a function, class, or method before MCP/CLI impact analysis.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
 - NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER commit before MCP/CLI graph change analysis.
 
 ## Resources
 
 | Resource | Use for |
-|----------|---------|
+| --- | --- |
 | `gitnexus://repo/multica/context` | Codebase overview, check index freshness |
 | `gitnexus://repo/multica/clusters` | All functional areas |
 | `gitnexus://repo/multica/processes` | All execution flows |
@@ -118,12 +129,12 @@ This project is indexed by GitNexus as **multica** (50795 symbols, 152869 relati
 ## CLI
 
 | Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| --- | --- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->

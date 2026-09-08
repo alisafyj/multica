@@ -20,12 +20,26 @@ import type {
   Workload,
 } from "./types";
 
+type RuntimeLiveness = Pick<AgentRuntime, "status" | "last_seen_at">;
+
+function runtimeAvailabilityFromAgent(agent: Agent): AgentAvailability | null {
+  const availability = agent.runtime_availability;
+  if (
+    availability !== "online" &&
+    availability !== "unstable" &&
+    availability !== "offline"
+  ) {
+    return null;
+  }
+  return availability;
+}
+
 // AgentAvailability mirrors RuntimeHealth's reachability buckets but folds
 // `long_offline` into `offline`. A missing runtime row is `unknown` only when
 // the agent still has an authoritative binding: shared agents can expose the
 // binding while correctly hiding their owner's private runtime health.
 export function deriveAgentAvailability(
-  runtime: AgentRuntime | null,
+  runtime: RuntimeLiveness | null,
   now: number,
   runtimeBound = false,
 ): AgentAvailability {
@@ -86,7 +100,7 @@ export function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetai
 
 interface DerivePresenceInput {
   agent: Agent;
-  runtime: AgentRuntime | null;
+  runtime: RuntimeLiveness | null;
   // Tasks for THIS agent only. Callers (buildPresenceMap, hooks) pre-filter
   // by agent_id — we don't re-check here.
   tasks: readonly AgentTask[];
@@ -110,11 +124,14 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     };
   }
 
-  const availability = deriveAgentAvailability(
-    input.runtime,
-    input.now,
-    isAgentRuntimeBound(input.agent),
-  );
+  const availability = input.runtime
+    ? deriveAgentAvailability(input.runtime, input.now)
+    : runtimeAvailabilityFromAgent(input.agent) ??
+      deriveAgentAvailability(
+        null,
+        input.now,
+        isAgentRuntimeBound(input.agent),
+      );
   const detail = deriveWorkloadDetail(input.tasks);
 
   return {

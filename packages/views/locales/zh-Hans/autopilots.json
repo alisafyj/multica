@@ -18,7 +18,7 @@
     "last_run_empty": "--",
     "empty": {
       "title": "还没有自动化",
-      "hint": "为你的智能体安排周期性 task。从模板选一个，或从空白开始。"
+      "hint": "为你的智能体安排周期性工作。从模板选一个，或从空白开始。"
     },
     "scope_all": "全部",
     "no_matches": "没有匹配的自动化",
@@ -32,7 +32,8 @@
   },
   "execution_mode": {
     "create_issue": "创建任务",
-    "run_only": "仅运行"
+    "run_only": "仅运行",
+    "test_run": "测试轮次"
   },
   "relative_date": {
     "today": "今天",
@@ -111,7 +112,9 @@
       "cancel": "取消",
       "confirm": "删除",
       "deleting": "删除中..."
-    }
+    },
+    "field_test_plan": "测试计划",
+    "test_plan_unavailable": "计划不可用"
   },
   "access": {
     "title": "管理访问",
@@ -146,7 +149,8 @@
     "skipped_group": {
       "label": "已跳过",
       "summary": "{{count}} 条跳过的运行"
-    }
+    },
+    "test_run_linked": "测试轮次"
   },
   "webhook_payload": {
     "label": "Webhook 事件：",
@@ -259,7 +263,7 @@
     "sr_edit": "编辑自动化",
     "header_create": "新建自动化",
     "header_edit": "编辑自动化",
-    "subtitle": "周期性的 AI task",
+    "subtitle": "周期性的 AI 工作",
     "expand": "展开",
     "collapse": "收起",
     "close": "关闭",
@@ -327,8 +331,18 @@
       "run_only": {
         "label": "仅运行",
         "description": "静默运行，不创建任务"
+      },
+      "test_run": {
+        "label": "测试轮次",
+        "description": "每次运行按测试计划建一轮并派发执行"
       }
-    }
+    },
+    "section_test_plan": "测试计划",
+    "test_plan_placeholder": "选择测试计划",
+    "no_test_plans": "还没有测试计划——先在“测试”里创建",
+    "test_plan_required": "请选择每次运行建轮次所依据的测试计划",
+    "test_run_parallelism": "并行用例数",
+    "test_run_parallelism_hint": "同时派发的用例数；留空则全部派发"
   },
   "schedule_editor": {
     "time_label": "时间",

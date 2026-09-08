@@ -101,6 +101,25 @@ func (q *Queries) BindChatAttachmentsToMessage(ctx context.Context, arg BindChat
 	return items, nil
 }
 
+const countAttachmentsSharingURL = `-- name: CountAttachmentsSharingURL :one
+SELECT count(*) FROM attachment WHERE url = $1 AND workspace_id = $2
+`
+
+type CountAttachmentsSharingURLParams struct {
+	Url         string      `json:"url"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// How many rows point at one stored object. A defect's evidence copy shares
+// the object with the run case's original, so deleting one row must leave
+// the object alone while the other still references it.
+func (q *Queries) CountAttachmentsSharingURL(ctx context.Context, arg CountAttachmentsSharingURLParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAttachmentsSharingURL, arg.Url, arg.WorkspaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUnboundChatAttachmentsForTask = `-- name: CountUnboundChatAttachmentsForTask :one
 SELECT COUNT(*) FROM attachment
 WHERE workspace_id = $1
@@ -227,6 +246,60 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		&i.SourceContextID,
 		&i.IssueRevision,
 		&i.CommentRevision,
+	)
+	return i, err
+}
+
+const createAttachmentCopyForIssue = `-- name: CreateAttachmentCopyForIssue :one
+INSERT INTO attachment (
+    id, workspace_id, issue_id, uploader_type, uploader_id, filename, url, content_type, size_bytes
+)
+SELECT $1, a.workspace_id, $2, $3, $4, a.filename, a.url, a.content_type, a.size_bytes
+FROM attachment a
+WHERE a.id = $5 AND a.workspace_id = $6
+RETURNING id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id, source_context_id
+`
+
+type CreateAttachmentCopyForIssueParams struct {
+	ID           pgtype.UUID `json:"id"`
+	IssueID      pgtype.UUID `json:"issue_id"`
+	UploaderType string      `json:"uploader_type"`
+	UploaderID   pgtype.UUID `json:"uploader_id"`
+	ID_2         pgtype.UUID `json:"id_2"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+}
+
+// A second attachment row over the same stored object, filed under an issue:
+// how a defect keeps the evidence of the case that found it without a
+// second upload. The object is shared, so deleting either row must not
+// remove it (see DeleteAttachment).
+func (q *Queries) CreateAttachmentCopyForIssue(ctx context.Context, arg CreateAttachmentCopyForIssueParams) (Attachment, error) {
+	row := q.db.QueryRow(ctx, createAttachmentCopyForIssue,
+		arg.ID,
+		arg.IssueID,
+		arg.UploaderType,
+		arg.UploaderID,
+		arg.ID_2,
+		arg.WorkspaceID,
+	)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.CommentID,
+		&i.UploaderType,
+		&i.UploaderID,
+		&i.Filename,
+		&i.Url,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.ChatSessionID,
+		&i.ChatMessageID,
+		&i.TaskID,
+		&i.TestRunCaseID,
+		&i.SourceContextID,
 	)
 	return i, err
 }
@@ -992,6 +1065,55 @@ type ListAttachmentsBySourceContextParams struct {
 
 func (q *Queries) ListAttachmentsBySourceContext(ctx context.Context, arg ListAttachmentsBySourceContextParams) ([]Attachment, error) {
 	rows, err := q.db.Query(ctx, listAttachmentsBySourceContext, arg.WorkspaceID, arg.SourceContextID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Attachment{}
+	for rows.Next() {
+		var i Attachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IssueID,
+			&i.CommentID,
+			&i.UploaderType,
+			&i.UploaderID,
+			&i.Filename,
+			&i.Url,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.ChatSessionID,
+			&i.ChatMessageID,
+			&i.TaskID,
+			&i.TestRunCaseID,
+			&i.SourceContextID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAttachmentsByTestRunCase = `-- name: ListAttachmentsByTestRunCase :many
+SELECT id, workspace_id, issue_id, comment_id, uploader_type, uploader_id, filename, url, content_type, size_bytes, created_at, chat_session_id, chat_message_id, task_id, test_run_case_id, source_context_id FROM attachment
+WHERE test_run_case_id = $1 AND workspace_id = $2
+ORDER BY created_at ASC
+`
+
+type ListAttachmentsByTestRunCaseParams struct {
+	TestRunCaseID pgtype.UUID `json:"test_run_case_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+// Evidence files an agent or tester uploaded for one run case.
+func (q *Queries) ListAttachmentsByTestRunCase(ctx context.Context, arg ListAttachmentsByTestRunCaseParams) ([]Attachment, error) {
+	rows, err := q.db.Query(ctx, listAttachmentsByTestRunCase, arg.TestRunCaseID, arg.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}

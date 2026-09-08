@@ -667,8 +667,15 @@ const larkListMessagesMaxPageSize = 50
 // package keys on; body.content is forwarded verbatim for the enricher's
 // flattener to interpret.
 func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
+	items, _, err := c.ListChatMessagesPage(ctx, creds, p, "")
+	return items, err
+}
+
+// ListChatMessagesPage preserves Feishu's opaque page token for on-demand
+// history reads. Inbound enrichment keeps using only the first bounded page.
+func (c *httpAPIClient) ListChatMessagesPage(ctx context.Context, creds InstallationCredentials, p ListMessagesParams, pageToken string) ([]LarkMessage, string, error) {
 	if p.ChatID == "" {
-		return nil, errors.New("lark http client: missing chat_id")
+		return nil, "", errors.New("lark http client: missing chat_id")
 	}
 	size := p.PageSize
 	if size <= 0 {
@@ -695,30 +702,39 @@ func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds Installation
 	q.Set("sort_type", "ByCreateTimeDesc")
 	q.Set("page_size", strconv.Itoa(size))
 	q.Set("user_id_type", "open_id")
+	if pageToken != "" {
+		q.Set("page_token", pageToken)
+	}
 	path := "/open-apis/im/v1/messages?" + q.Encode()
 
 	var resp struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
-			Items []larkRESTMessageItem `json:"items"`
+			Items     []larkRESTMessageItem `json:"items"`
+			HasMore   bool                  `json:"has_more"`
+			PageToken string                `json:"page_token"`
 		} `json:"data"`
 	}
 	if err := c.doAuthedJSON(ctx, creds, http.MethodGet, path, nil, &resp); err != nil {
-		return nil, fmt.Errorf("lark http client: list chat messages: %w", err)
+		return nil, "", fmt.Errorf("lark http client: list chat messages: %w", err)
 	}
 	if resp.Code != 0 {
 		if isTokenError(resp.Code) {
 			c.invalidateToken(creds.AppID)
 		}
-		return nil, fmt.Errorf("lark http client: list chat messages: code=%d msg=%q", resp.Code, resp.Msg)
+		return nil, "", fmt.Errorf("lark http client: list chat messages: code=%d msg=%q", resp.Code, resp.Msg)
 	}
 
 	out := make([]LarkMessage, 0, len(resp.Data.Items))
 	for _, it := range resp.Data.Items {
 		out = append(out, it.normalize())
 	}
-	return out, nil
+	next := ""
+	if resp.Data.HasMore {
+		next = resp.Data.PageToken
+	}
+	return out, next, nil
 }
 
 // DownloadMessageResource obtains a binary message resource (image, video,
@@ -1055,6 +1071,7 @@ func (c *httpAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCre
 // flat `sender.id` / `mentions[].id` string (not a nested id object).
 type larkRESTMessageItem struct {
 	MessageID      string `json:"message_id"`
+	ChatID         string `json:"chat_id"`
 	RootID         string `json:"root_id"`
 	ParentID       string `json:"parent_id"`
 	ThreadID       string `json:"thread_id"`
@@ -1071,15 +1088,17 @@ type larkRESTMessageItem struct {
 		Content string `json:"content"`
 	} `json:"body"`
 	Mentions []struct {
-		Key  string `json:"key"`
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		Key    string `json:"key"`
+		ID     string `json:"id"`
+		IDType string `json:"id_type"`
+		Name   string `json:"name"`
 	} `json:"mentions"`
 }
 
 func (it larkRESTMessageItem) normalize() LarkMessage {
 	m := LarkMessage{
 		MessageID:      it.MessageID,
+		ChatID:         it.ChatID,
 		MessageType:    it.MsgType,
 		Content:        it.Body.Content,
 		SenderID:       it.Sender.ID,
@@ -1092,7 +1111,7 @@ func (it larkRESTMessageItem) normalize() LarkMessage {
 		Deleted:        it.Deleted,
 	}
 	for _, mn := range it.Mentions {
-		m.Mentions = append(m.Mentions, LarkMessageMention{Key: mn.Key, ID: mn.ID, Name: mn.Name})
+		m.Mentions = append(m.Mentions, LarkMessageMention{Key: mn.Key, ID: mn.ID, IDType: mn.IDType, Name: mn.Name})
 	}
 	return m
 }
