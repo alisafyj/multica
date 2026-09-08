@@ -61,8 +61,10 @@
     "new_issue": "New Issue",
     "new_issue_shortcut": "C",
     "pinned_label": "Pinned",
-    "workspace_group": "Workspace",
-    "configure_group": "Configure",
-    "unread_overflow": "99+"
+    "unread_overflow": "99+",
+    "work_group": "Work",
+    "ai_team_group": "AI team",
+    "show_more_pins": "Show {{count}} more…",
+    "show_fewer_pins": "Show fewer"
   }
 }

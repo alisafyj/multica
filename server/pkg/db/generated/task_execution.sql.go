@@ -11,47 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const listAgentTaskUsage = `-- name: ListAgentTaskUsage :many
-SELECT tu.id, tu.task_id, tu.provider, tu.model, tu.input_tokens, tu.output_tokens, tu.cache_read_tokens, tu.cache_write_tokens, tu.created_at, tu.updated_at, tu.cost_usd_ticks
-FROM task_usage tu
-JOIN agent_task_queue t ON t.id = tu.task_id
-WHERE t.agent_id = $1
-ORDER BY tu.task_id, tu.provider, tu.model
-`
-
-// The caller has resolved and authorized this agent in its workspace.
-func (q *Queries) ListAgentTaskUsage(ctx context.Context, agentID pgtype.UUID) ([]TaskUsage, error) {
-	rows, err := q.db.Query(ctx, listAgentTaskUsage, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []TaskUsage{}
-	for rows.Next() {
-		var i TaskUsage
-		if err := rows.Scan(
-			&i.ID,
-			&i.TaskID,
-			&i.Provider,
-			&i.Model,
-			&i.InputTokens,
-			&i.OutputTokens,
-			&i.CacheReadTokens,
-			&i.CacheWriteTokens,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.CostUsdTicks,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const updateTaskExecutionMetrics = `-- name: UpdateTaskExecutionMetrics :execrows
 UPDATE agent_task_queue
 SET execution_metrics = $1::jsonb

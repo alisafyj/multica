@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/taskexecution"
@@ -101,38 +99,4 @@ func executionMetricsFromJSON(data []byte) *taskexecution.Snapshot {
 		return nil
 	}
 	return snapshot
-}
-
-// Agent history uses the same per-task/provider/model grain as issue history.
-// No row means unknown usage, not zero; one query avoids per-task lookups.
-func (h *Handler) hydrateAgentTaskUsage(ctx context.Context, agentID pgtype.UUID, resp []AgentTaskResponse) {
-	if len(resp) == 0 {
-		return
-	}
-	rows, err := h.Queries.ListAgentTaskUsage(ctx, agentID)
-	if err != nil {
-		slog.Warn("list agent task usage failed", "agent_id", uuidToString(agentID), "error", err)
-		return
-	}
-	byTask := make(map[string][]TaskUsageData, len(resp))
-	for _, row := range rows {
-		var cost *int64
-		if row.CostUsdTicks.Valid {
-			value := row.CostUsdTicks.Int64
-			cost = &value
-		}
-		taskID := uuidToString(row.TaskID)
-		byTask[taskID] = append(byTask[taskID], TaskUsageData{
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			CostUsdTicks:     cost,
-		})
-	}
-	for i := range resp {
-		resp[i].Usage = byTask[resp[i].ID]
-	}
 }

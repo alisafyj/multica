@@ -1,6 +1,8 @@
 ---
 name: multica-prd
 description: Draft a human's @Mika PRD request directly in the current task, request original-human confirmation, then publish the exact confirmed draft through the server. Never launch development.
+user-invocable: false
+allowed-tools: Bash(multica *)
 ---
 
 # Controlled topic PRD
@@ -85,5 +87,3 @@ Without a human confirmation, state `待确认` and stop. On a later @mention:
 5. `unknown` with no `document_id`: stop. A remote copy may already exist. Report the draft/version and ask a maintainer to reconcile; never automatically create another document.
 
 Do not automatically estimate effort, create engineering tasks, bind accounts, schedule work, launch development or run downstream SY skills. Document publishing is this workflow's endpoint.
-
-See [implementation map](references/prd-source-map.md) for the exact supported commands and server boundary.

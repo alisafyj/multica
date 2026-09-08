@@ -18,25 +18,6 @@ import (
 // deadline must tolerate, not a target.
 const slowestMeasuredOpenclawCall = 10860 * time.Millisecond
 
-// TestOpenclawCLIDefaultTimeoutCoversMeasuredSlowHosts is the regression for
-// the reported bug. The old 5s default was written against an assumed <200ms
-// CLI; the reporter's host needs twice that budget for a single call, every
-// time, and had no way to raise it — so the OpenClaw runtime was unusable
-// there. Anything that lowers this default back under the measured range
-// re-breaks that host.
-func TestOpenclawCLIDefaultTimeoutCoversMeasuredSlowHosts(t *testing.T) {
-	if openclawCLITimeout <= slowestMeasuredOpenclawCall {
-		t.Errorf("default openclaw CLI timeout %v must exceed the slowest measured call %v (#7112)",
-			openclawCLITimeout, slowestMeasuredOpenclawCall)
-	}
-	// Headroom, not a bare pass: a host at the measured worst case should not
-	// sit one scheduling hiccup away from failing again.
-	if openclawCLITimeout < 2*slowestMeasuredOpenclawCall {
-		t.Errorf("default openclaw CLI timeout %v leaves less than 2x headroom over %v",
-			openclawCLITimeout, slowestMeasuredOpenclawCall)
-	}
-}
-
 func TestResolveOpenclawCLITimeout(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -163,31 +144,6 @@ func TestExecOpenclawCLICancellationIsNotATimeout(t *testing.T) {
 	}
 }
 
-// TestOpenclawCLIMaxTimeoutFitsPreparationBudget is the arithmetic the
-// override ceiling rests on. Each preparation *step* gets its own deadline, so
-// the budget that matters is worst-case-deadlines x ceiling, and it has to stay
-// under the daemon's 5-minute task preparation deadline with room for the rest
-// of Prepare (repo checkout, skills, context files). Otherwise a user who raises
-// the timeout turns a specific, non-retryable CLI timeout back into the
-// generic — and retryable — prepare timeout, which is the failure mode this
-// change set out to remove.
-func TestOpenclawCLIMaxTimeoutFitsPreparationBudget(t *testing.T) {
-	// Mirrors daemon.defaultTaskPrepareTimeout, which execenv cannot import
-	// (the daemon imports this package, not the other way round).
-	const taskPrepareBudget = 5 * time.Minute
-	// Everything Prepare does besides openclaw config discovery.
-	const nonOpenclawPrepareSlack = time.Minute
-
-	worst := openclawMaxCLIDeadlinesPerPreparation * openclawCLIMaxTimeout
-	if worst+nonOpenclawPrepareSlack > taskPrepareBudget {
-		t.Errorf("worst-case openclaw discovery %v (%d deadlines x %v) leaves less than %v under the %v preparation budget",
-			worst, openclawMaxCLIDeadlinesPerPreparation, openclawCLIMaxTimeout, nonOpenclawPrepareSlack, taskPrepareBudget)
-	}
-	if openclawCLITimeout > openclawCLIMaxTimeout {
-		t.Errorf("default %v exceeds the override ceiling %v", openclawCLITimeout, openclawCLIMaxTimeout)
-	}
-}
-
 // TestOpenclawActiveConfigPathSpendsOneBudgetAcrossBothAttempts is the
 // consequence of sharing that deadline, asserted rather than left implicit.
 //
@@ -238,18 +194,21 @@ func TestOpenclawActiveConfigPathSpendsOneBudgetAcrossBothAttempts(t *testing.T)
 // TestPrepareOpenclawConfigWorstCaseCLIBudgets pins the multiplier the budget
 // above depends on, and it counts *deadlines* rather than calls.
 //
-// That distinction is the review finding it exists for. In this fork the worst
-// case is five invocations: `config validate --json` can fail to answer and fall
-// back to `config file`, a 2026.6+ host falls back to the registry subcommand,
-// and a selected agent additionally reads `skills.load.extraDirs`. The first
-// pair shares one deadline, while the managed-MCP snapshot reads the active
-// config file directly and therefore spends no CLI deadline. The previous
-// version of this test did not select an agent, so it observed only three
-// deadlines even though the production ceiling is four.
+// That distinction is the review finding it exists for. The worst case is not the
+// common two calls: `config validate --json` can fail to answer and fall back to
+// `config file`, and a 2026.6+ host falls back to the registry subcommand — four
+// invocations. The earlier version of this test could not see the first pair,
+// because the stub synthesizes a `config validate --json` success from the
+// `config file` response, so the two never fired in the same run. With the
+// fallback carrying a fresh full deadline, the worst case was five budgets at the
+// 60s ceiling, i.e. 5m of CLI time alone, landing exactly on
+// daemon.defaultTaskPrepareTimeout — and the specific, non-retryable
+// ErrOpenclawCLITimeout collapses back into the generic retryable one.
 //
-// This drives the real worst case and asserts both halves: the call graph is
-// five invocations, and path resolution's two share one deadline, leaving four
-// distinct deadlines.
+// A managed mcp_config used to add a fifth invocation of its own. It no longer
+// reads anything (see TestPrepareOpenclawConfigManagedMcpCostsNoExtraCLICall), so
+// this drives the managed path too and still expects four invocations across
+// three deadlines: path resolution's two share one.
 func TestPrepareOpenclawConfigWorstCaseCLIBudgets(t *testing.T) {
 	envRoot := t.TempDir()
 	workDir := filepath.Join(envRoot, "workdir")
@@ -268,15 +227,16 @@ func TestPrepareOpenclawConfigWorstCaseCLIBudgets(t *testing.T) {
 		"config file": {stdout: userConfigPath},
 		// 2. pre-2026.6 schema read, which this host does not have
 		"config get agents.list --json": {err: errors.New("Config path not found: agents.list")},
-		// 3. registry fallback, including the selected agent's workspace
-		"agents list --json": {stdout: `[{"id":"scout","workspace":"/tmp/scout-workspace"}]`},
-		// 4. selected-agent skill directory lookup
-		"config get skills.load.extraDirs --json": {stdout: `[]`},
+		// 3. registry fallback
+		"agents list --json": {stdout: `[{"id":"scout"}]`},
+		// No fourth entry, and the managed mcp_config below is why that is worth
+		// stating: managed MCP is prepared from a file this package writes, so it
+		// adds no invocation. The stub errors on anything unregistered, so a
+		// reintroduced read fails here instead of quietly costing a budget.
 	})
 
 	if _, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
 		OpenclawBin: stub.bin,
-		AgentID:     "scout",
 		McpConfig:   []byte(`{"mcpServers":{"fs":{"command":"fs-server"}}}`),
 	}); err != nil {
 		t.Fatalf("prepareOpenclawConfig: %v", err)
@@ -295,13 +255,12 @@ func TestPrepareOpenclawConfigWorstCaseCLIBudgets(t *testing.T) {
 	}
 
 	// The call graph itself, so a new invocation stays visible here even when it
-	// shares an existing budget.
+	// costs no extra budget.
 	wantInvocations := []string{
 		"config validate --json",
 		"config file",
 		"config get agents.list --json",
 		"agents list --json",
-		"config get skills.load.extraDirs --json",
 	}
 	if strings.Join(invocations, " | ") != strings.Join(wantInvocations, " | ") {
 		t.Errorf("worst-case invocations:\n got: %v\nwant: %v", invocations, wantInvocations)

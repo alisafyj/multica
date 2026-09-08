@@ -15,6 +15,7 @@ import {
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
 import { detectWebOS } from "@/platform/client-os";
+import { useUserLocaleSyncEnabled } from "@/platform/user-locale-sync";
 
 function hasLegacyToken(): boolean {
   if (typeof window === "undefined") return false;
@@ -54,6 +55,7 @@ export function WebProviders({
   wsUrl?: string;
 }) {
   const cookieAuth = !hasLegacyToken();
+  const syncUserLocale = useUserLocaleSyncEnabled();
   // Stable identity reference so downstream effects keyed on it don't see a
   // new object on every parent render.
   const identity = useMemo(
@@ -88,6 +90,7 @@ export function WebProviders({
       locale={locale}
       resources={resources}
       localeAdapter={localeAdapter}
+      syncUserLocale={syncUserLocale}
     >
       <WebNavigationProvider>
         <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>

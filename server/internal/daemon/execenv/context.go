@@ -122,8 +122,17 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 	return nil
 }
 
-// writeContextFiles renders and writes .agent_context/issue_context.md and
-// skills into the appropriate provider-native location.
+// writeContextFiles writes the task's sidecar files: the task-context marker,
+// agent skills in the appropriate provider-native location, and project
+// resources.
+//
+// It deliberately writes no per-task Markdown brief. There used to be an
+// .agent_context/issue_context.md carrying the issue id, trigger comment id,
+// handoff note, quick-create input, and autopilot run data — every one of
+// which the runtime brief and the per-turn user message already carry. No
+// provider read the file (nothing in either surface pointed at it), so it was
+// a third copy that had to be kept in sync with the two that agents actually
+// see, for no reader at all (MUL-6984).
 //
 // Claude:      skills → {workDir}/.claude/skills/{name}/SKILL.md  (native discovery)
 // CodeBuddy:   skills → {workDir}/.codebuddy/skills/{name}/SKILL.md  (native discovery — CodeBuddy is a Claude Code fork but uses its own config directory, not .claude/; see https://www.codebuddy.ai/docs/cli/skills)
@@ -154,27 +163,6 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
-	}
-
-	contextDir := filepath.Join(workDir, ".agent_context")
-	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
-		return fmt.Errorf("create .agent_context dir: %w", err)
-	}
-
-	content := renderIssueContext(provider, ctx)
-	path := filepath.Join(contextDir, "issue_context.md")
-	if err := recordWriteFile(path, []byte(content), 0o644, manifest); err != nil {
-		// A pre-existing path means the user already owns
-		// .agent_context/issue_context.md — either they created it
-		// themselves or it survived from a crashed prior run we can't
-		// safely distinguish from intentional content. Refusing the
-		// write is the correct call: the runtime brief (CLAUDE.md /
-		// AGENTS.md) already carries every fact this file
-		// would, so the agent runs fine without the sidecar copy.
-		// Anything else is a real failure.
-		if !errors.Is(err, errPathPreExists) {
-			return fmt.Errorf("write issue_context.md: %w", err)
-		}
 	}
 
 	if err := writeProjectDesignSystemContext(workDir, ctx, manifest); err != nil {

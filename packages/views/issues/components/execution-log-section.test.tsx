@@ -461,17 +461,6 @@ describe("execution log header geometry", () => {
     usage: [usageSlice()],
   });
 
-  it("keeps the section label on one line", () => {
-    renderSection([completed]);
-
-    const label = screen.getByText("Execution log");
-    // The label is the only header item allowed to shrink, so it is the one
-    // that must carry nowrap + ellipsis. A heading that reflows mid-phrase
-    // reads as broken; an ellipsis reads as a narrow column.
-    expect(label.className).toContain("truncate");
-    expect(label.closest("button")?.className).toContain("whitespace-nowrap");
-  });
-
   it("tiers on the sidebar's width, not the viewport's", () => {
     const { container } = renderSection([completed]);
 

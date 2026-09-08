@@ -77,10 +77,9 @@ func classifyTask(ctx TaskContextForEnv) taskKind {
 }
 
 // hasIssueContext returns true for the kinds that operate on a real Multica
-// issue and therefore can read / pin issue-scoped state. The slim
-// dispatcher gates these two sections on this predicate:
+// issue and therefore can read / write issue-scoped state. The slim
+// dispatcher gates one section on this predicate:
 //
-//   - Issue Metadata
 //   - Sub-issue Creation
 //
 // Both are meaningless on the issue-less kinds (chat / quick-create /
