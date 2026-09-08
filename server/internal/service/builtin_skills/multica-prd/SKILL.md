@@ -1,6 +1,8 @@
 ---
 name: multica-prd
 description: Platform API reference for task-scoped Feishu PRD templates, file-first drafts, and guarded publication of an original human's confirmed version.
+user-invocable: false
+allowed-tools: Bash(multica *)
 ---
 
 # PRD platform capabilities
@@ -38,5 +40,3 @@ Save returns `draft_id`, `version`, `content`, `source_message_id`, verified `in
 - `confirmation` is the exact phrase `确认创建 <draft-id> v<version>`. The original human must send it as their own new plain-text message in the same topic and genuinely @mention Mika to trigger the follow-up; a same-topic reply is supported. After genuine mentions are removed, the text must match exactly. Quoted/forwarded approval, bots, other senders/topics, deleted messages and stale versions do not authorize publication. An agent must not send confirmation for a human.
 - The server rereads the real message, verifies sender/topic/time, freezes and atomically claims the version, copies the configured template, fills content, transfers ownership to the original requester and verifies content/owner. Skill changes cannot relax these checks.
 - `published` returns the verified `document_url`; repeated valid publication returns the same document. `failed` exposes durable `phase`/`failure` via `get`; retrying the same draft/version/confirmation resumes the known document. `unknown` without `document_id` requires maintainer reconciliation because a remote copy may already exist. Never create a replacement topic/draft/document to bypass frozen or uncertain state.
-
-See [implementation map](references/prd-source-map.md) for API shapes, configuration and editable-skill delivery.

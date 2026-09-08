@@ -27,6 +27,11 @@ func TestBuiltinPRDSkillSurvivesRuntimeAdmission(t *testing.T) {
 	}
 	skill := SkillData{Name: "multica-prd", Content: string(body)}
 	err = filepath.WalkDir(filepath.Join(root, "references"), func(path string, entry fs.DirEntry, err error) error {
+		// Built-in payload carries no source maps any more, so this skill may
+		// ship as a SKILL.md with no supporting files at all.
+		if os.IsNotExist(err) {
+			return nil
+		}
 		if err != nil || entry.IsDir() {
 			return err
 		}

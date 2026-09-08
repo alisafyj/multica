@@ -8,9 +8,8 @@ allowed-tools: Bash(multica *)
 # Test Cases
 
 This skill states WHAT a Multica test case is and what the CLI guarantees about
-it, traced to source. Every claim is pinned in
-`references/test-cases-source-map.md`; when behavior differs from this document,
-the source map is where to re-check it.
+it. When behavior differs from this document, the CLI's own `--help` and the
+case JSON are the authority.
 
 ## A case is project-scoped and machine-readable
 
@@ -79,7 +78,7 @@ The claim is what makes a regression scope computable from a diff, with no
 history and no model:
 
     multica testcase recommend --project <project-id> --diff origin/main --output json
-    multica testcase recommend --project <project-id> src/order/checkout.ts src/cart/total.ts
+    multica testcase recommend --project <project-id> billing/checkout.rb billing/cart.rb
     git diff --name-only origin/main | multica testcase recommend --project <project-id> --stdin
     multica testcase recommend --project <project-id> --repo web --diff origin/main --run "Regression for PR 12"
 
@@ -95,7 +94,7 @@ path_count}], unmatched_paths, total}` ranked by `path_count` (distinct changed
 paths the case claims), then by case number. Deprecated cases never appear.
 Glob semantics are gitignore-like: `**` spans directories, `*` and `?` stop at
 a slash, `{a,b}` alternates, a pattern without a slash matches at any depth
-(`*.go`), and a plain directory (`apps/mobile` or `apps/mobile/`) claims
+(`*.rb`), and a plain directory (`mobile` or `mobile/`) claims
 everything under it. `unmatched_paths` is the gap: changed files no case
 claims. When it lists source files of a feature you know cases for, fix the
 bindings (`multica testcase update <TC-n> --repos …`) rather than hand-picking

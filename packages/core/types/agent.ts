@@ -441,8 +441,8 @@ export interface AgentTask {
   attribution?: TaskAttribution;
   /**
    * This run's own token consumption, one entry per (provider, model) it used.
-   * Present on the issue execution-log endpoint only; the daemon claim path
-   * omits it.
+   * Present on issue execution logs and explicit agent-history accounting
+   * requests; normal UI history and daemon claims omit it.
    *
    * `undefined` (old backend, or a surface that doesn't hydrate it) and `[]`
    * (backend hydrated, this run has no recorded usage) both mean "no number to
@@ -502,6 +502,8 @@ export interface Agent {
   runtime_id: string;
   /** False exactly when the agent has no runtime. Older backends omit it. */
   runtime_bound?: boolean;
+  /** Privacy-safe coarse liveness for a runtime hidden from the runtime list. */
+  runtime_availability?: "online" | "unstable" | "offline";
   name: string;
   description: string;
   /** What this agent's owner wrote. For a system agent this holds only the

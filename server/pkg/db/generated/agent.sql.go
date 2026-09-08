@@ -5514,9 +5514,8 @@ type ListActiveTasksByIssueFamilyRow struct {
 //
 // Issue identity is joined in because the caller renders runs from several
 // issues in one list and cannot label a row from the task alone. agent_id is
-// here for the same reason: unlike ListActiveSiblingIssueTasks, whose rows all
-// belong to the claiming agent by construction, this read spans agents — which
-// one is on a sibling is the answer, not a detail.
+// here for the same reason: this read spans agents, and which one is on a
+// sibling is the answer, not a detail.
 //
 // Columns are named rather than embedded. This is the coordination question,
 // not the execution log: result and context are JSONB blobs, and work_dir /
@@ -7313,6 +7312,53 @@ func (q *Queries) MergeDelegatedFailureCommentIntoPendingTask(ctx context.Contex
 		&i.ExecutionMetrics,
 	)
 	return i, err
+}
+
+const nextDeferredTaskFireAtForRuntimes = `-- name: NextDeferredTaskFireAtForRuntimes :one
+SELECT MIN(fire_at)::timestamptz
+FROM agent_task_queue t
+WHERE t.runtime_id = ANY($1::uuid[])
+  AND t.status = 'deferred'
+  AND EXISTS (
+    SELECT 1 FROM agent_runtime r
+    WHERE r.id = t.runtime_id
+      AND r.status = 'online'
+      AND COALESCE(r.last_seen_at, r.updated_at) >=
+          now() - make_interval(secs => $2::double precision)
+  )
+  AND (
+    t.fire_at > now()
+    OR NOT EXISTS (
+      SELECT 1 FROM agent_task_queue occupant
+      WHERE occupant.issue_id = t.issue_id
+        AND occupant.agent_id = t.agent_id
+        AND occupant.id <> t.id
+        AND (
+          occupant.status IN ('queued', 'dispatched')
+          OR (occupant.status = 'deferred' AND occupant.context->>'channel_issue_media_pending' = 'true')
+        )
+    )
+  )
+`
+
+type NextDeferredTaskFireAtForRuntimesParams struct {
+	RuntimeIds       []pgtype.UUID `json:"runtime_ids"`
+	RuntimeStaleSecs float64       `json:"runtime_stale_secs"`
+}
+
+// Returns the next future deferred task for a daemon's authorized runtime set,
+// or an eligible task that crossed fire_at during this claim. Overdue tasks
+// whose runtime is offline/stale or that are blocked by an existing issue+agent
+// occupant are omitted so they cannot cause a tight poll loop. Keep both fences
+// in sync with PromoteDueDeferredTasksForRuntimes: a task that cannot be
+// promoted must not advertise an immediate follow-up claim. The response
+// converts the timestamp to a relative delay, avoiding any dependency on
+// daemon/server clock synchronization.
+func (q *Queries) NextDeferredTaskFireAtForRuntimes(ctx context.Context, arg NextDeferredTaskFireAtForRuntimesParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, nextDeferredTaskFireAtForRuntimes, arg.RuntimeIds, arg.RuntimeStaleSecs)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const promoteDeferredChannelIssueTask = `-- name: PromoteDeferredChannelIssueTask :one

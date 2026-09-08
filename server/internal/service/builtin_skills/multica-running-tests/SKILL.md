@@ -8,9 +8,8 @@ allowed-tools: Bash(multica *)
 # Running Tests
 
 This skill covers what a Multica test run is, how to drive it from the CLI,
-and what the platform enforces. Every claim is pinned in
-`references/running-tests-source-map.md`; when behavior differs from this
-document, the source map is where to re-check it.
+and what the platform enforces. When behavior differs from this document, the
+CLI's own `--help` and the run's JSON output are the authority.
 
 ## 1. Discover capabilities first, always
 
