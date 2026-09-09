@@ -746,6 +746,8 @@ export function createChatStore(options: ChatStoreOptions) {
       inputDrafts: nextDrafts,
       inputDraftAttachments: nextDraftAttachments,
       conciseModes: readConciseModes(storage, wsKey(CONCISE_MODES_KEY)),
+      appliedDraftRestoreIds: readAppliedRestores(storage, wsKey(APPLIED_RESTORES_KEY)),
+      pendingSendRestores: readPendingSendRestores(storage, wsKey(PENDING_SEND_RESTORES_KEY)),
     });
   });
 
