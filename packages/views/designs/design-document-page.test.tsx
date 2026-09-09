@@ -109,7 +109,8 @@ vi.mock("../common/actor-avatar", () => ({
 
 import { I18nProvider } from "@multica/core/i18n/react";
 import zhCommon from "../locales/zh-Hans/common.json";
-import { DesignDocumentPage, defaultRevisionId, documentErrorMessage, previewEntries } from "./design-document-page";
+import { DesignDocumentPage, defaultRevisionId, documentErrorMessage } from "./design-document-page";
+import { previewEntries } from "./design-document-preview";
 
 const AGENT = { id: "agent-1", workspace_id: "ws-1", name: "小设计", runtime_id: "runtime-1", runtime_bound: true, archived_at: null };
 

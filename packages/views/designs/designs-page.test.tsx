@@ -76,6 +76,7 @@ vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     designDetail: (id: string) => `/acme/designs/${id}`,
     designDraftDetail: (id: string) => `/acme/designs/drafts/${id}`,
+    designDocumentDetail: (id: string) => `/acme/designs/documents/${id}`,
     projectDesignSystemDetail: (id: string) => `/acme/designs/systems/${id}`,
   }),
 }));
@@ -406,6 +407,62 @@ describe("DesignsPage", () => {
     expect(
       within(screen.getByRole("tabpanel", { name: "首页" })).getByLabelText("页面需求描述"),
     ).toBeInTheDocument();
+  });
+
+  it.each(["project", "repository"] as const)("opens saved %s documents in the viewer while drafts remain editable", async (scope) => {
+    const user = userEvent.setup();
+    const document = {
+      id: "document-1", workspace_id: "ws-1", project_id: "project-1", project_resource_id: "",
+      issue_id: "", title: "客户列表页", platform: "web", recipe: "ui-mockup",
+      status: "draft_ahead_of_saved", draft_revision_id: "revision-2", saved_revision_id: "revision-1",
+      active_task: null, input_snapshot: {}, last_error: null, repository_grounded: false,
+      created_at: "2026-08-20T00:00:00Z", updated_at: "2026-08-21T00:00:00Z", saved_at: "2026-08-20T00:00:00Z",
+    };
+    const documents = [
+      document,
+      { ...document, id: "document-saved", title: "已保存客户详情", status: "saved", draft_revision_id: "revision-1" },
+      { ...document, id: "document-failed", title: "调整失败客户报表", status: "failed", draft_revision_id: "" },
+      { ...document, id: "document-draft", title: "未保存客户表单", status: "draft", saved_revision_id: "" },
+    ];
+    listDesignDocuments.mockResolvedValue({ documents: scope === "project" ? documents : [] });
+    listDesignDocumentsForWorkspaceRepository.mockResolvedValue({ documents: scope === "repository" ? documents : [] });
+    listDesignRepositories.mockResolvedValue({ repositories: [{
+      id: "resource-h5", project_id: "", project_title: "", label: "crm-h5", description: "CRM H5",
+      repository_url: "https://github.com/acme/crm-h5", default_branch_hint: "main",
+    }] });
+    renderWithClient(<DesignsPage />);
+    if (scope === "repository") {
+      await user.click(await screen.findByRole("button", { name: "按仓库" }));
+      await user.click(screen.getByRole("button", { name: "打开仓库" }));
+      await user.click(screen.getByRole("menuitem", { name: /crm-h5/ }));
+    } else {
+      await user.click(await screen.findByRole("button", { name: "打开项目" }));
+      await user.click(screen.getByRole("menuitem", { name: "CRM" }));
+    }
+
+    const savedPanel = await screen.findByRole("tabpanel", { name: /设计稿/ });
+    const savedCard = await within(savedPanel).findByRole("button", { name: /^客户列表页/ });
+    expect(within(savedPanel).getAllByText("有未保存调整")).toHaveLength(1);
+    expect(within(savedPanel).getByText("已保存客户详情")).toBeInTheDocument();
+    expect(within(savedPanel).getByText("调整失败客户报表")).toBeInTheDocument();
+    expect(within(savedPanel).queryByText("未保存客户表单")).not.toBeInTheDocument();
+    await user.click(savedCard);
+    expect(navigate).toHaveBeenLastCalledWith("/acme/designs/documents/document-1/view");
+
+    await user.click(screen.getByRole("tab", { name: /设计草稿/ }));
+    const draftPanel = screen.getByRole("tabpanel", { name: /设计草稿/ });
+    await user.click(await within(draftPanel).findByRole("button", { name: /^客户列表页/ }));
+    expect(navigate).toHaveBeenLastCalledWith("/acme/designs/documents/document-1");
+    await user.click(within(draftPanel).getByRole("button", { name: /^未保存客户表单/ }));
+    expect(navigate).toHaveBeenLastCalledWith("/acme/designs/documents/document-draft");
+    expect(within(draftPanel).queryByText("有未保存调整")).not.toBeInTheDocument();
+
+    if (scope === "project") {
+      await user.click(screen.getByRole("tab", { name: "首页" }));
+      const homePanel = screen.getByRole("tabpanel", { name: "首页" });
+      await user.click(await within(homePanel).findByRole("button", { name: /^客户列表页/ }));
+      expect(navigate).toHaveBeenLastCalledWith("/acme/designs/documents/document-1");
+    }
   });
 
   it("keeps active design drafts in their own tab without review wording", async () => {

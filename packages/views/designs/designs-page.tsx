@@ -1024,13 +1024,17 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                 ) : visibleDocuments.length > 0 ? (
                   <div className="grid gap-4 grid-cols-2 min-[564px]:grid-cols-3 min-[756px]:grid-cols-4 min-[948px]:grid-cols-5">
                     {visibleDocuments.map((document) => (
-                      <DesignDocumentCard
-                        key={document.id}
-                        document={document}
-                        projectTitle={selectedProject?.title ?? ""}
-                        onOpen={() => openDocument(document)}
-                        {...documentActions.cardProps(document)}
-                      />
+                      <div key={document.id} className="min-w-0 space-y-2">
+                        <DesignDocumentCard
+                          document={document}
+                          projectTitle={selectedProject?.title ?? ""}
+                          onOpen={() => navigation.push(paths.designDocumentDetail(document.id) + "/view")}
+                          {...documentActions.cardProps(document)}
+                        />
+                        {document.draft_revision_id && document.draft_revision_id !== document.saved_revision_id ? (
+                          <Badge variant="outline" className="text-caption">有未保存调整</Badge>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 ) : (

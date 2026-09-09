@@ -15,7 +15,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
-import { previewEntries } from "../../designs/design-document-page";
+import { previewEntries } from "../../designs/design-document-preview";
 import { designImplementationStatus, implementationReceipt } from "./issue-design-restore-section";
 import { inlinePrototypePage } from "../../designs/inline-prototype";
 import { mediaTypeForPath } from "../../designs/package-paths";
