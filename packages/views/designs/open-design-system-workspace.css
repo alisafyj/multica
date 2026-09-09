@@ -69,11 +69,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--text-caption);
 }
 .ds-project-chat__bar span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 .ds-project-chat__pane {
@@ -240,7 +240,7 @@
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.35;
 }
 .ds-workspace-todos span.is-running {
@@ -258,7 +258,7 @@
 }
 .ds-workspace-files-touched > span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -320,7 +320,7 @@
   border-radius: var(--radius-pill);
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 .ds-generation-review-steps span.is-running {
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
@@ -358,7 +358,7 @@
 }
 .ds-review-section__head small {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 .ds-review-section__body {
   border-top: 1px solid var(--border);
@@ -397,7 +397,7 @@
 .od-design-system-flow .ds-review-column { width: min(860px, calc(100vw - 470px)); max-width: calc(100% - 48px); }
 .od-design-system-flow .ds-review-section__body .prose { max-width: none; }
 .od-design-system-flow .od-token-grid { display: grid; gap: 8px; }
-.od-design-system-flow .od-token-row { display: grid; grid-template-columns: 28px minmax(160px, 1fr) minmax(160px, 1fr); align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); font-size: 12px; }
+.od-design-system-flow .od-token-row { display: grid; grid-template-columns: 28px minmax(160px, 1fr) minmax(160px, 1fr); align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); font-size: var(--text-caption); }
 .od-design-system-flow .od-token-row:last-child { border-bottom: 0; }
 .od-design-system-flow .od-token-row code { overflow-wrap: anywhere; color: var(--text-muted); }
 .od-design-system-flow .ds-file-list { display: grid; gap: 10px; }
@@ -420,7 +420,7 @@
   padding: 0 10px;
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 .od-design-system-flow .od-indeterminate-progress {
@@ -434,7 +434,7 @@
 .od-design-system-flow .ds-review-section__head h2 {
   margin: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--text-body);
   font-weight: 700;
   line-height: 1.35;
 }
