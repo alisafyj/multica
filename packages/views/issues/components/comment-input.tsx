@@ -7,8 +7,9 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
-import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { useCommentDraftStore, useCommentComposerStore } from "@multica/core/issues/stores";
 import { useT } from "../../i18n";
+import { ConciseModeToggle } from "./concise-mode-toggle";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
@@ -20,7 +21,7 @@ interface CommentInputProps {
   /** Resolves true on success, false on failure. The composer keeps the text
    *  (editor locked + button spinning) until this settles, then clears only on
    *  success — a failed send must not silently discard the user's draft. */
-  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[]) => Promise<string | boolean>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], conciseMode?: boolean) => Promise<string | boolean>;
   /** Called after the server accepts the comment and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
 }
@@ -181,6 +182,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
         content,
         activeIds.length > 0 ? activeIds : undefined,
         suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+        useCommentComposerStore.getState().concise || undefined,
       ).then((commentId) => {
         acceptedCommentIdRef.current = typeof commentId === "string" ? commentId : null;
         return !!commentId;
@@ -298,6 +300,7 @@ function CommentInput({ issueId, onSubmit, onAccepted }: CommentInputProps) {
           multiple
           onSelect={(file) => lazy.uploadOrQueue([file])}
         />
+        {triggerPreview.agents.length > 0 && <ConciseModeToggle disabled={submitting} />}
         <SubmitButton
           onClick={submit}
           disabled={isEmpty}

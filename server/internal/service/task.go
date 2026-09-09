@@ -1182,6 +1182,12 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 	return s.enqueueIssueTask(ctx, issue, commentID, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{}, false)
 }
 
+// EnqueueTaskForIssueWithMode is EnqueueTaskForIssue with an explicit
+// concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForIssueWithMode(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueIssueTask(ctx, issue, triggerCommentID, false, "", pgtype.UUID{}, pgtype.UUID{}, pgtype.Timestamptz{}, false, conciseMode)
+}
+
 // EnqueueTaskForIssueCreate is the create-time variant. Its INSERT verifies
 // the issue and linked project are still runnable in the statement snapshot,
 // closing the post-create completion gap without holding a DB connection over
@@ -1454,6 +1460,24 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlan(ctx context.Context, issue
 // deriving it from the issue assignee.
 func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
 	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false)
+}
+
+// EnqueueTaskForMentionWithMode is EnqueueTaskForMention with an explicit
+// concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForMentionWithMode(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
+}
+
+// EnqueueTaskForThreadParentWithMode is EnqueueTaskForThreadParent with an
+// explicit concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForThreadParentWithMode(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
+}
+
+// EnqueueTaskForSquadLeaderWithMode is EnqueueTaskForSquadLeader with an
+// explicit concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForSquadLeaderWithMode(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, squadID, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
 }
 
 // EnqueueTaskForThreadParent creates a queued task for the agent who authored

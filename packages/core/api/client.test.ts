@@ -1905,6 +1905,37 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("serializes concise_mode tri-state on the comment contract", async () => {
+    const commentBody = () => new Response(JSON.stringify({
+      id: "comment-1",
+      issue_id: "issue-1",
+      author_type: "member",
+      author_id: "user-1",
+      content: "hello",
+      type: "comment",
+      parent_id: null,
+      created_at: "2026-09-09T00:00:00Z",
+      updated_at: "2026-09-09T00:00:00Z",
+    }), { status: 201, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn().mockImplementation(() => commentBody());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.createComment("issue-1", "concise", undefined, undefined, undefined, undefined, { conciseMode: true });
+    await client.createComment("issue-1", "standard");
+
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({
+      content: "concise",
+      type: "comment",
+      concise_mode: true,
+    });
+    // Omitted option keeps the legacy body so older servers are untouched.
+    expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({
+      content: "standard",
+      type: "comment",
+    });
+  });
+
   it("uses the Cloud Runtime node API contract", async () => {
     const node = {
       id: "node-1",
