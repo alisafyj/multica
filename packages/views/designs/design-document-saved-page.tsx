@@ -13,6 +13,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { previewEntries } from "./design-document-preview";
+import { DesignDocumentThumbnail } from "./design-document-thumbnail";
 
 export function DesignDocumentSavedPage({ documentId }: { documentId: string }) {
   const wsId = useWorkspaceId();
@@ -25,8 +26,10 @@ export function DesignDocumentSavedPage({ documentId }: { documentId: string }) 
   const revisionQuery = useQuery(designDocumentRevisionOptions(wsId, documentId, savedRevisionId));
   const revision = savedRevisionId && revisionQuery.data?.id === savedRevisionId ? revisionQuery.data : undefined;
   const entries = useMemo(() => previewEntries(revision), [revision]);
-  const [activeEntry, setActiveEntry] = useState("");
-  const page = entries.find((entry) => entry.entry === activeEntry) ?? entries[0];
+  const [selection, setSelection] = useState<{ revisionId: string; entry: string } | null>(null);
+  const page = selection?.revisionId === savedRevisionId
+    ? entries.find((entry) => entry.entry === selection.entry)
+    : undefined;
   const previewUrl = revision?.resource_base_path && page
     ? api.getDesignDocumentPreviewFileURL(revision.resource_base_path, page.entry)
     : "";
@@ -62,14 +65,35 @@ export function DesignDocumentSavedPage({ documentId }: { documentId: string }) 
           <div className="flex flex-wrap items-center gap-3 border-b bg-background px-4 py-3">
             <Badge variant="secondary">已保存{revision ? ` · v${revision.revision_number}` : ""}</Badge>
             <span className="text-caption text-muted-foreground">只读查看</span>
-            {entries.length > 0 ? (
-              <NativeSelect aria-label="页面" value={page?.entry ?? ""} onChange={(event) => setActiveEntry(event.target.value)}>
+            <span className="text-caption text-muted-foreground">{entries.length} 个页面</span>
+            {page ? (
+              <>
+              <Button size="sm" variant="outline" onClick={() => setSelection(null)}>返回页面概览</Button>
+              <NativeSelect aria-label="页面" value={page.entry} onChange={(event) => setSelection({ revisionId: savedRevisionId, entry: event.target.value })}>
                 {entries.map((entry) => <NativeSelectOption key={entry.entry} value={entry.entry}>{entry.title}</NativeSelectOption>)}
               </NativeSelect>
+              </>
             ) : null}
           </div>
           <div className="flex min-h-0 flex-1 justify-center overflow-auto bg-muted/30 p-4">
-            {previewUrl ? (
+            {!page && revision && entries.length > 0 ? (
+              <section aria-label="页面概览" className="grid w-full content-start grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {entries.map((entry) => (
+                  <button
+                    key={entry.entry}
+                    type="button"
+                    aria-label={`查看页面：${entry.title}`}
+                    onClick={() => setSelection({ revisionId: savedRevisionId, entry: entry.entry })}
+                    className="group flex min-w-0 flex-col gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="aspect-[16/9] w-full overflow-hidden rounded-lg border bg-background group-hover:border-primary">
+                      <DesignDocumentThumbnail revision={revision} entryPath={entry.entry} title={entry.title} />
+                    </div>
+                    <span className="w-full truncate text-body font-medium">{entry.title}</span>
+                  </button>
+                ))}
+              </section>
+            ) : previewUrl ? (
               <iframe
                 key={savedRevisionId + ":" + page?.entry}
                 title={title + " · " + page?.title}

@@ -1027,6 +1027,7 @@ export function DesignsPage({ figmaPluginDownloadUrl }: { figmaPluginDownloadUrl
                       <div key={document.id} className="min-w-0 space-y-2">
                         <DesignDocumentCard
                           document={document}
+                          variant="saved"
                           projectTitle={selectedProject?.title ?? ""}
                           onOpen={() => navigation.push(paths.designDocumentDetail(document.id) + "/view")}
                           {...documentActions.cardProps(document)}

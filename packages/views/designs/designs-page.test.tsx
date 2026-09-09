@@ -5,6 +5,7 @@ import { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  getDesignDocumentRevision,
   getProjectDesignSystem,
   getProjectDesignSystemForProject,
   getProjectDesignSystemForWorkspaceRepository,
@@ -23,6 +24,7 @@ const {
   listProjects,
   navigate,
 } = vi.hoisted(() => ({
+  getDesignDocumentRevision: vi.fn(),
   getProjectDesignSystem: vi.fn(),
   getProjectDesignSystemForProject: vi.fn(),
   getProjectDesignSystemForWorkspaceRepository: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("@multica/core/api", () => ({
     createDesignDocument: vi.fn(),
     createFigmaImportConnection: vi.fn(),
     createProjectDesignSystem: vi.fn(),
+    getDesignDocumentRevision,
     getProjectDesignSystem,
     getProjectDesignSystemForProject,
     getProjectDesignSystemForWorkspaceRepository,
@@ -202,6 +205,16 @@ describe("DesignsPage", () => {
     listAgents.mockResolvedValue([]);
     listDesignDocuments.mockResolvedValue({ documents: [] });
     listDesignDocumentsForWorkspaceRepository.mockResolvedValue({ documents: [] });
+    getDesignDocumentRevision.mockImplementation(async (_documentId: string, id: string) => ({
+      id,
+      pages: (id === "revision-1" ? ["home", "orders"] : ["home", "orders", "draft-only"]).map((page) => ({
+        id: page, title: page, entry: `prototype/${page}.html`, parent_id: "", state_ids: [],
+      })),
+      files: [],
+      preview_targets: [],
+      prototype_entry: "prototype/home.html",
+      resource_base_path: "",
+    }));
     listDesignDrafts.mockResolvedValue({ drafts: [], total: 0 });
     listDesignFiles.mockResolvedValue({ design_files: [], total: 0 });
     listDesignFolders.mockResolvedValue({ folders: [], total: 0 });
@@ -446,11 +459,15 @@ describe("DesignsPage", () => {
     expect(within(savedPanel).getByText("已保存客户详情")).toBeInTheDocument();
     expect(within(savedPanel).getByText("调整失败客户报表")).toBeInTheDocument();
     expect(within(savedPanel).queryByText("未保存客户表单")).not.toBeInTheDocument();
+    expect(await within(savedCard).findByText("2 个页面")).toBeInTheDocument();
+    expect(within(savedCard).queryByText("3 个页面")).not.toBeInTheDocument();
     await user.click(savedCard);
     expect(navigate).toHaveBeenLastCalledWith("/acme/designs/documents/document-1/view");
 
     await user.click(screen.getByRole("tab", { name: /设计草稿/ }));
     const draftPanel = screen.getByRole("tabpanel", { name: /设计草稿/ });
+    const draftCard = await within(draftPanel).findByRole("button", { name: /^客户列表页/ });
+    expect(await within(draftCard).findByText("3 个页面")).toBeInTheDocument();
     await user.click(await within(draftPanel).findByRole("button", { name: /^客户列表页/ }));
     expect(navigate).toHaveBeenLastCalledWith("/acme/designs/documents/document-1");
     await user.click(within(draftPanel).getByRole("button", { name: /^未保存客户表单/ }));

@@ -118,22 +118,15 @@ export function documentHeight(frameDocument: Document, maxHeight: number): numb
 }
 
 async function decodeSvg(svg: string): Promise<HTMLImageElement> {
-  // A blob URL rather than a data URI: a full page of inlined assets makes a
-  // string far past what some browsers accept in a URL, and a blob inherits
-  // this origin so the canvas stays untainted.
-  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("导出时无法渲染页面，请改用「下载单页 HTML」"));
-      image.src = url;
-    });
-    return image;
-  } finally {
-    // Revoked after decode: the image keeps its own reference to the data.
-    URL.revokeObjectURL(url);
-  }
+  // Chromium taints canvases drawn from blob-backed SVG foreignObjects.
+  // An inlined data image keeps the self-contained document exportable.
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("导出时无法渲染页面，请改用「下载单页 HTML」"));
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  });
+  return image;
 }
 
 /** Rasterises one inlined page. */

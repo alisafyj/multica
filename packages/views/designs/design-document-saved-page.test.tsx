@@ -30,6 +30,7 @@ vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: ReactNode; href: string }) => <a href={href}>{children}</a>,
   useNavigation: () => ({ push: navigate }),
 }));
+vi.mock("./design-document-thumbnail", () => ({ DesignDocumentThumbnail: () => null }));
 
 import { DesignDocumentSavedPage } from "./design-document-saved-page";
 
@@ -73,10 +74,15 @@ beforeEach(() => {
 });
 
 describe("saved document viewer", () => {
-  it("previews only saved pages despite a newer cached draft, and opens the same workbench", async () => {
+  it("starts with saved page overview, opens pages, returns to overview, and continues in the same workbench", async () => {
     const user = userEvent.setup();
     const { container } = renderPage();
-    const frame = await screen.findByTitle("订单总览 · saved-1 首页");
+    await screen.findByRole("region", { name: "页面概览" });
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.getByText("3 个页面")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /查看页面：draft-2/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看页面：saved-1 首页" }));
+    const frame = screen.getByTitle("订单总览 · saved-1 首页");
     expect(frame).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/index.html");
     expect(frame).toHaveAttribute("sandbox", "allow-scripts");
     expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
@@ -85,6 +91,11 @@ describe("saved document viewer", () => {
     expect(screen.getByTitle("订单总览 · saved-1 订单")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/orders.html");
     await user.selectOptions(screen.getByRole("combobox", { name: "页面" }), "prototype/extra.html");
     expect(container.querySelector("iframe")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/extra.html");
+    await user.click(screen.getByRole("button", { name: "返回页面概览" }));
+    expect(screen.getByRole("region", { name: "页面概览" })).toBeInTheDocument();
+    expect(container.querySelector("iframe")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "查看页面：saved-1 订单" }));
+    expect(screen.getByTitle("订单总览 · saved-1 订单")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/orders.html");
     await user.click(screen.getByRole("button", { name: "继续调整" }));
     expect(navigate).toHaveBeenCalledWith("/acme/designs/documents/document-1");
   });
@@ -106,16 +117,21 @@ describe("saved document viewer", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("无法加载已保存版本");
     expect(container.querySelector("iframe")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "重试" }));
-    expect(await screen.findByTitle("订单总览 · saved-1 首页")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/index.html");
+    await userEvent.click(await screen.findByRole("button", { name: "查看页面：saved-1 首页" }));
+    expect(screen.getByTitle("订单总览 · saved-1 首页")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/index.html");
   });
 
   it("follows saved pointer updates but ignores newer draft updates and clears a removed saved pointer", async () => {
     const { client, container } = renderPage();
-    await screen.findByTitle("订单总览 · saved-1 首页");
+    await userEvent.click(await screen.findByRole("button", { name: "查看页面：saved-1 首页" }));
     await act(async () => { client.setQueryData(designKeys.document("ws-1", "document-1"), document("saved-1", "draft-3")); });
     expect(screen.getByTitle("订单总览 · saved-1 首页")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/index.html");
     await act(async () => { client.setQueryData(designKeys.document("ws-1", "document-1"), document("saved-2", "draft-3")); });
-    expect(await screen.findByTitle("订单总览 · saved-2 首页")).toHaveAttribute("src", "https://api.test/preview/saved-2/prototype/index.html");
+    await screen.findByRole("button", { name: "查看页面：saved-2 首页" });
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(screen.queryByRole("button", { name: "查看页面：saved-1 首页" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "查看页面：saved-2 首页" }));
+    expect(screen.getByTitle("订单总览 · saved-2 首页")).toHaveAttribute("src", "https://api.test/preview/saved-2/prototype/index.html");
     await act(async () => { client.setQueryData(designKeys.document("ws-1", "document-1"), document("", "draft-3")); });
     await waitFor(() => expect(container.querySelector("iframe")).toBeNull());
     expect(screen.getByText(/还没有已保存版本/)).toBeInTheDocument();
@@ -128,7 +144,8 @@ describe("saved document viewer", () => {
     expect(await screen.findByRole("status", { name: "加载已保存版本" })).toBeInTheDocument();
     expect(container.querySelector("iframe")).toBeNull();
     await act(async () => { resolve(revision("saved-1")); });
-    expect(await screen.findByTitle("订单总览 · saved-1 首页")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/index.html");
+    expect(await screen.findByRole("button", { name: "查看页面：saved-1 首页" })).toBeInTheDocument();
+    expect(container.querySelector("iframe")).toBeNull();
   });
 
   it("distinguishes document loading and failure from missing saved content", async () => {
