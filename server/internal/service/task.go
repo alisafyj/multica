@@ -1462,24 +1462,6 @@ func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue,
 	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false)
 }
 
-// EnqueueTaskForMentionWithMode is EnqueueTaskForMention with an explicit
-// concise-mode selection for the queued run (SY-326 comment path).
-func (s *TaskService) EnqueueTaskForMentionWithMode(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
-}
-
-// EnqueueTaskForThreadParentWithMode is EnqueueTaskForThreadParent with an
-// explicit concise-mode selection for the queued run (SY-326 comment path).
-func (s *TaskService) EnqueueTaskForThreadParentWithMode(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
-}
-
-// EnqueueTaskForSquadLeaderWithMode is EnqueueTaskForSquadLeader with an
-// explicit concise-mode selection for the queued run (SY-326 comment path).
-func (s *TaskService) EnqueueTaskForSquadLeaderWithMode(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, squadID, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
-}
-
 // EnqueueTaskForThreadParent creates a queued task for the agent who authored
 // the direct parent comment a member replied to.
 func (s *TaskService) EnqueueTaskForThreadParent(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
@@ -1499,6 +1481,24 @@ func (s *TaskService) EnqueueTaskForThreadParent(ctx context.Context, issue db.I
 // sub-issue done callback). See migration 127.
 func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
 	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, squadID, false, "", pgtype.UUID{}, pgtype.UUID{}, false)
+}
+
+// EnqueueTaskForMentionWithMode is EnqueueTaskForMention with an explicit
+// concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForMentionWithMode(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
+}
+
+// EnqueueTaskForThreadParentWithMode is EnqueueTaskForThreadParent with an
+// explicit concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForThreadParentWithMode(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{}, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
+}
+
+// EnqueueTaskForSquadLeaderWithMode is EnqueueTaskForSquadLeader with an
+// explicit concise-mode selection for the queued run (SY-326 comment path).
+func (s *TaskService) EnqueueTaskForSquadLeaderWithMode(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, squadID pgtype.UUID, triggerCommentID pgtype.UUID, conciseMode bool) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, squadID, false, "", pgtype.UUID{}, pgtype.UUID{}, false, conciseMode)
 }
 
 func (s *TaskService) EnqueueTaskForSquadLeaderOnIssueCreate(ctx context.Context, issue db.Issue, leaderID, squadID, actorUserID pgtype.UUID) (db.AgentTaskQueue, error) {

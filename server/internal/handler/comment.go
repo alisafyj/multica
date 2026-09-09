@@ -1972,6 +1972,11 @@ func isNoteComment(content string) bool {
 }
 
 // triggerTasksForComment resolves and enqueues the comment's agent triggers and
+// returns the per-target outcomes (MUL-4525 §2): queued / coalesced / deferred
+// are success-shaped; suppressed triggers (and every implicit routing fallback
+// that resolved no agent) produce no outcome. conciseMode opts the freshly
+// enqueued runs into the lightweight task prompt (SY-326 comment path); a
+// coalesced run keeps the mode its queued row already carries.
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID string, suppressAgentIDs []pgtype.UUID, conciseMode bool) []CommentTriggerOutcome {
 	if isNoteComment(comment.Content) {
 		return nil
