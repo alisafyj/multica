@@ -1561,6 +1561,7 @@ export class ApiClient {
     parentId?: string,
     attachmentIds?: string[],
     suppressAgentIds?: string[],
+    options?: { conciseMode?: boolean },
   ): Promise<Comment> {
     return this.fetch(`/api/issues/${issueId}/comments`, {
       method: "POST",
@@ -1570,6 +1571,9 @@ export class ApiClient {
         ...(parentId ? { parent_id: parentId } : {}),
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+        // Tri-state on the wire: omitted key keeps the standard workflow
+        // prompt so older servers (and standard sends) are untouched.
+        ...(options?.conciseMode !== undefined ? { concise_mode: options.conciseMode } : {}),
       }),
     });
   }

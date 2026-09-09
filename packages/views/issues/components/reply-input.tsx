@@ -7,7 +7,8 @@ import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
-import { useCommentDraftStore, type CommentDraftKey } from "@multica/core/issues/stores";
+import { useCommentDraftStore, useCommentComposerStore, type CommentDraftKey } from "@multica/core/issues/stores";
+import { ConciseModeToggle } from "./concise-mode-toggle";
 import { cn } from "@multica/ui/lib/utils";
 import type { AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useT } from "../../i18n";
@@ -28,7 +29,7 @@ interface ReplyInputProps {
   avatarId: string;
   /** Resolves true on success, false on failure — the reply box keeps its text
    *  (locked + spinning) until then, clearing only on success. */
-  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[]) => Promise<string | boolean>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], conciseMode?: boolean) => Promise<string | boolean>;
   /** Called after the server accepts the reply and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
   size?: "sm" | "default";
@@ -183,6 +184,7 @@ function ReplyInput({
         content,
         activeIds.length > 0 ? activeIds : undefined,
         suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+        useCommentComposerStore.getState().concise || undefined,
       ).then((commentId) => {
         acceptedCommentIdRef.current = typeof commentId === "string" ? commentId : null;
         return !!commentId;
@@ -300,6 +302,7 @@ function ReplyInput({
             multiple
             onSelect={(file) => lazy.uploadOrQueue([file])}
           />
+          {triggerPreview.agents.length > 0 && <ConciseModeToggle disabled={submitting} />}
           <SubmitButton
             onClick={submit}
             disabled={isEmpty}
