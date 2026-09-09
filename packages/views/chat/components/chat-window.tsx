@@ -435,6 +435,7 @@ export function ChatWindow() {
       attachmentIds?: string[],
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
+      conciseMode: boolean = false,
     ): Promise<boolean> => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
@@ -481,6 +482,7 @@ export function ChatWindow() {
         agentId: activeAgent.id,
         contentLength: finalContent.length,
         attachmentCount: attachmentIds?.length ?? 0,
+        conciseMode,
       });
 
       let sessionId: string | null = null;
@@ -511,7 +513,9 @@ export function ChatWindow() {
       // the draft for retry (ChatInput never cleared it).
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds, {
+          conciseMode,
+        });
       } catch (err) {
         apiLogger.error("sendChatMessage.error", { sessionId, err });
         const reason = dispatchReasonCode(err);
@@ -569,6 +573,13 @@ export function ChatWindow() {
       // clears the sent draft, and scrubs the shared editor only when the user
       // is still on the session they sent from.
       const live = useChatStore.getState();
+      // SY-326: the composer reads the mode from the session-id slot once the
+      // new session is published - carry the new-chat slot's choice over so
+      // the follow-up replies keep the selected mode. Only a session-creating
+      // send may consume the new-chat slot.
+      if (isNewSession) {
+        live.carryConciseModeToSession(sessionId);
+      }
       const stillOnSourceSession = isStillOnComposeTarget(live.activeSessionId, activeSessionId);
       if (stillOnSourceSession) {
         setActiveSession(sessionId);
@@ -925,7 +936,20 @@ export function ChatWindow() {
           hasOlderMessages={!!hasOlderMessages}
           isFetchingOlderMessages={isFetchingOlderMessages}
           onLoadOlderMessages={() => void fetchOlderMessages()}
-          onQuickAction={(action) => handleSend(action.prompt)}
+          onQuickAction={(action) => {
+            // Quick actions only render on an existing session's message list,
+            // so the live active session id is the right slot - its stored
+            // mode (SY-326) must ride along or the turn silently reverts to
+            // standard and breaks mode-filtered resume.
+            const live = useChatStore.getState();
+            void handleSend(
+              action.prompt,
+              undefined,
+              undefined,
+              undefined,
+              live.conciseModes[live.activeSessionId ?? ""] ?? false,
+            );
+          }}
           quickActionsDisabled={
             !!pendingTaskId ||
             isSessionArchived ||

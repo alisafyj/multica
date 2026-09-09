@@ -2651,6 +2651,7 @@ func (s *TaskService) SendDirectChatMessage(
 	initiatorUserID pgtype.UUID,
 	content string,
 	attachmentIDs []pgtype.UUID,
+	conciseMode bool,
 	uploaderType string,
 	uploaderID pgtype.UUID,
 ) (*DirectChatSendResult, error) {
@@ -2723,6 +2724,7 @@ func (s *TaskService) SendDirectChatMessage(
 			OriginatorUserID:     attr.UserID,
 			AccountableUserID:    attr.AccountableUserID,
 			ForceFreshSession:    pgtype.Bool{Bool: false, Valid: true},
+			ConciseMode:          pgtype.Bool{Bool: conciseMode, Valid: true},
 			RuntimeMcpOverlay:    overlay.Overlay,
 			RuntimeConnectedApps: overlay.ConnectedApps,
 			OriginatorSource:     attrSource,

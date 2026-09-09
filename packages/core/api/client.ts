@@ -3695,13 +3695,21 @@ export class ApiClient {
     sessionId: string,
     content: string,
     attachmentIds?: string[],
+    options?: { conciseMode?: boolean },
   ): Promise<SendChatMessageResponse> {
     const body: {
       content: string;
       attachment_ids?: string[];
+      concise_mode?: boolean;
     } = { content };
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
+    }
+    // Same tri-state convention as rerunIssue: omit the key entirely for the
+    // server default (standard mode); an explicit boolean forces the mode for
+    // this queued task.
+    if (options?.conciseMode !== undefined) {
+      body.concise_mode = options.conciseMode;
     }
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",

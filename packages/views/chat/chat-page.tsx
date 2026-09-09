@@ -263,7 +263,20 @@ export function ChatPage() {
           hasOlderMessages={c.hasOlderMessages}
           isFetchingOlderMessages={c.isFetchingOlderMessages}
           onLoadOlderMessages={() => void c.fetchOlderMessages()}
-          onQuickAction={(action) => c.handleSend(action.prompt)}
+          onQuickAction={(action) => {
+            // Quick actions only render on an existing session's message list,
+            // so the live active session id is the right slot - its stored
+            // mode (SY-326) must ride along or the turn silently reverts to
+            // standard and breaks mode-filtered resume.
+            const live = useChatStore.getState();
+            void c.handleSend(
+              action.prompt,
+              undefined,
+              undefined,
+              undefined,
+              live.conciseModes[live.activeSessionId ?? ""] ?? false,
+            );
+          }}
           quickActionsDisabled={
             !!c.pendingTaskId ||
             c.isSessionArchived ||
