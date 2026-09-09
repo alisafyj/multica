@@ -222,6 +222,8 @@ vi.mock("@multica/core/chat", () => {
     selectedAgentId: "agent-1",
     inputDrafts: {} as Record<string, string>,
     inputDraftAttachments: {} as Record<string, unknown[]>,
+    conciseModes: {} as Record<string, boolean>,
+    setConciseMode: vi.fn(),
     setInputDraft: vi.fn(),
     appendToInputDraft: vi.fn(),
     setInputDraftAttachments: vi.fn(),
@@ -269,11 +271,19 @@ beforeEach(() => {
     settleInputDraftUpload: ReturnType<typeof vi.fn>;
     failInputDraftUpload: ReturnType<typeof vi.fn>;
     removeInputDraftUpload: ReturnType<typeof vi.fn>;
+    conciseModes: Record<string, boolean>;
+    setConciseMode: ReturnType<typeof vi.fn>;
   };
   state.activeSessionId = null;
   state.selectedAgentId = "agent-1";
   state.inputDrafts = {};
   state.inputDraftAttachments = {};
+  state.conciseModes = {};
+  state.setConciseMode.mockClear();
+  state.setConciseMode.mockImplementation((key: string, concise: boolean) => {
+    if (concise) state.conciseModes[key] = true;
+    else delete state.conciseModes[key];
+  });
   state.setInputDraft.mockClear();
   state.setInputDraft.mockImplementation((key: string, value: string) => {
     state.inputDrafts[key] = value;
@@ -1180,6 +1190,7 @@ describe("ChatInput async send", () => {
       undefined,
       expect.any(Function),
       [],
+      false,
     );
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
     await waitFor(() => expect(sendButton!).toBeDisabled());
@@ -1218,7 +1229,7 @@ describe("ChatInput async send", () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), []);
+    expect(onSend).toHaveBeenCalledWith("retry me", undefined, expect.any(Function), [], false);
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
   });
 
@@ -1265,6 +1276,7 @@ describe("ChatInput async send", () => {
       ["att-persisted"],
       expect.any(Function),
       [attachment],
+      false,
     );
   });
 });
@@ -1537,5 +1549,117 @@ describe("ChatInput revoked-access placeholder", () => {
     renderInput({ agentName: "Multica" });
 
     expect(editorProps.last?.placeholder).toBe("Message Multica…");
+  });
+});
+
+describe("ChatInput concise mode switch", () => {
+  const CONCISE_ARIA = "Use concise agent mode for this chat";
+
+  function conciseSwitch() {
+    return screen.getByRole("checkbox", { name: CONCISE_ARIA });
+  }
+
+  function seedConciseMode(value: boolean) {
+    const state = useChatStore.getState() as unknown as {
+      conciseModes: Record<string, boolean>;
+    };
+    if (value) state.conciseModes["__draft_new__"] = true;
+    else delete state.conciseModes["__draft_new__"];
+  }
+
+  it("renders unchecked beside the send control and defaults to standard mode", () => {
+    renderInput();
+
+    expect(conciseSwitch()).not.toBeChecked();
+  });
+
+  it("routes toggle clicks through the per-session store slot", () => {
+    const state = useChatStore.getState() as unknown as {
+      setConciseMode: ReturnType<typeof vi.fn>;
+    };
+    renderInput();
+
+    fireEvent.click(conciseSwitch());
+
+    expect(state.setConciseMode).toHaveBeenCalledWith("__draft_new__", true);
+  });
+
+  it("passes the selected mode through onSend", async () => {
+    seedConciseMode(true);
+    const onSend = vi.fn<ChatInputOnSend>(() => true);
+    renderInput({ onSend });
+
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "quick task" } });
+    let sendButton: HTMLElement;
+    await waitFor(() => {
+      const buttons = screen.getAllByRole("button");
+      sendButton = buttons[buttons.length - 1]!;
+      expect(sendButton).not.toBeDisabled();
+    });
+    fireEvent.click(sendButton!);
+
+    expect(onSend).toHaveBeenCalledWith(
+      "quick task",
+      undefined,
+      expect.any(Function),
+      [],
+      true,
+    );
+  });
+
+  it("keeps the mode across sends within the session (SY-326 regression)", async () => {
+    seedConciseMode(true);
+    const onSend = vi.fn<ChatInputOnSend>(() => true);
+    renderInput({ onSend });
+
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "first" } });
+    let sendButton: HTMLElement;
+    await waitFor(() => {
+      const buttons = screen.getAllByRole("button");
+      sendButton = buttons[buttons.length - 1]!;
+      expect(sendButton).not.toBeDisabled();
+    });
+    fireEvent.click(sendButton!);
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    // The selection outlives the first send - the second reply uses the
+    // same mode without the user re-toggling anything.
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "second" } });
+    await waitFor(() => {
+      const buttons = screen.getAllByRole("button");
+      sendButton = buttons[buttons.length - 1]!;
+      expect(sendButton).not.toBeDisabled();
+    });
+    fireEvent.click(sendButton!);
+
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend).toHaveBeenNthCalledWith(
+      1,
+      "first",
+      undefined,
+      expect.any(Function),
+      [],
+      true,
+    );
+    expect(onSend).toHaveBeenNthCalledWith(
+      2,
+      "second",
+      undefined,
+      expect.any(Function),
+      [],
+      true,
+    );
+  });
+
+  it("hides the switch when no agent exists", () => {
+    renderInput({ noAgent: true });
+
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("hides the switch on embedded surfaces with a draft key override (Agent Builder)", () => {
+    renderInput({ draftKeyOverride: "builder-draft" });
+
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 });

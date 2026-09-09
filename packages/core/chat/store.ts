@@ -21,6 +21,12 @@ const DRAFTS_KEY = "multica:chat:drafts";
 /** Draft attachment records per workspace: { [sessionId]: Attachment[] }. */
 const DRAFT_ATTACHMENTS_KEY = "multica:chat:draft-attachments";
 /**
+ * Concise-mode selection per workspace: { [sessionId or __new__]: boolean }.
+ * Scoped like the drafts so a session's choice holds across replies (SY-326)
+ * and never bleeds into another session or the new-chat slot.
+ */
+const CONCISE_MODES_KEY = "multica:chat:concise-modes";
+/**
  * Ids of durable draft restores (#5219) this client has already written into a
  * composer. Persisted, because the server-side consume that follows can be lost
  * (retries exhausted, the app closed mid-flight) and the row would then be
@@ -81,6 +87,29 @@ function readDrafts(storage: StorageAdapter, key: string): Record<string, string
   try {
     const parsed = JSON.parse(raw);
     return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Shape-checked read: only boolean entries survive, so a corrupted or
+ * hand-edited blob can never put a non-boolean in front of the composer.
+ */
+function readConciseModes(
+  storage: StorageAdapter,
+  key: string,
+): Record<string, boolean> {
+  const raw = storage.getItem(key);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "boolean") out[k] = v;
+    }
+    return out;
   } catch {
     return {};
   }
@@ -314,6 +343,14 @@ export interface ChatState {
   /** Attachment rows referenced by each input draft. */
   /** Coordinator-owned uploads per draft slot (placeholders + completed). */
   inputDraftAttachments: Record<string, DraftUpload[]>;
+  /**
+   * Concise-mode selection per draft slot (sessionId or DRAFT_NEW_SESSION),
+   * mirroring inputDrafts scoping: the mode belongs to the conversation being
+   * composed, so a new chat has one slot per workspace and created sessions
+   * keep their own. Default false (standard mode); SY-326 requires the choice
+   * to hold across every reply in the same session instead of only the first.
+   */
+  conciseModes: Record<string, boolean>;
   /** Durable draft restores already written into a composer (#5219). */
   appliedDraftRestoreIds: string[];
   /** Server-less restores waiting for their session's composer, per session (#5219). */
@@ -335,7 +372,10 @@ export interface ChatState {
   setInputDraftAttachments: (sessionId: string, uploads: DraftUpload[]) => void;
   /** Record a completed server row as an uploaded entry (restore paths). */
   addInputDraftAttachment: (sessionId: string, attachment: Attachment) => void;
-  /** Record a placeholder the moment a file is picked (coordinator-owned). */
+  /** Opt this draft slot (session id or DRAFT_NEW_SESSION) into concise mode. */
+  setConciseMode: (sessionId: string, concise: boolean) => void;
+  /** Move the new-chat slot's concise choice onto the minted session id (SY-326). */
+  carryConciseModeToSession: (sessionId: string) => void;
   addInputDraftUpload: (sessionId: string, upload: DraftUpload) => void;
   /** Swap a placeholder for its completed attachment. No-op if it's gone. */
   settleInputDraftUpload: (sessionId: string, clientUploadId: string, attachment: Attachment) => void;
@@ -396,6 +436,7 @@ export function createChatStore(options: ChatStoreOptions) {
     selectedProjectId: storage.getItem(wsKey(PROJECT_STORAGE_KEY)),
     inputDrafts: initialDraftSlots.inputDrafts,
     inputDraftAttachments: initialDraftSlots.inputDraftAttachments,
+    conciseModes: readConciseModes(storage, wsKey(CONCISE_MODES_KEY)),
     appliedDraftRestoreIds: readAppliedRestores(storage, wsKey(APPLIED_RESTORES_KEY)),
     pendingSendRestores: readPendingSendRestores(storage, wsKey(PENDING_SEND_RESTORES_KEY)),
     chatWidth: Number(storage.getItem(CHAT_WIDTH_KEY)) || CHAT_DEFAULT_W,
@@ -439,6 +480,29 @@ export function createChatStore(options: ChatStoreOptions) {
       if (id) storage.setItem(wsKey(PROJECT_STORAGE_KEY), id);
       else storage.removeItem(wsKey(PROJECT_STORAGE_KEY));
       set({ selectedProjectId: id });
+    },
+    setConciseMode: (sessionId, concise) => {
+      logger.info("setConciseMode", { sessionId, concise });
+      const next = { ...get().conciseModes };
+      if (concise) next[sessionId] = true;
+      else delete next[sessionId];
+      // False is the default: pruning it keeps the blob empty for standard
+      // users instead of growing a key per session forever.
+      if (Object.keys(next).length === 0) storage.removeItem(wsKey(CONCISE_MODES_KEY));
+      else storage.setItem(wsKey(CONCISE_MODES_KEY), JSON.stringify(next));
+      set({ conciseModes: next });
+    },
+    // SY-326: the first send composes in the DRAFT_NEW_SESSION slot; once the
+    // server mints the session, subsequent replies read the session-id slot.
+    // Carry the pre-send choice across that key transition (callers gate this
+    // on the send actually creating a session) so the mode holds for the whole
+    // conversation, not just the first turn. The new-chat slot is CONSUMED:
+    // the choice has moved onto the session, and the next fresh chat must
+    // start standard again instead of silently inheriting it.
+    carryConciseModeToSession: (sessionId) => {
+      if (get().conciseModes[DRAFT_NEW_SESSION] !== true) return;
+      get().setConciseMode(sessionId, true);
+      get().setConciseMode(DRAFT_NEW_SESSION, false);
     },
     // Append-only until the server confirms. There is deliberately no capacity
     // cap: every entry in here is an UNconfirmed consume, and evicting one
@@ -646,6 +710,11 @@ export function createChatStore(options: ChatStoreOptions) {
     workspaceScoped: true,
     resetInMemory: () => store.setState({ pendingSendRestores: {} }),
   });
+  registerDraftCleanup({
+    storageKey: CONCISE_MODES_KEY,
+    workspaceScoped: true,
+    resetInMemory: () => store.setState({ conciseModes: {} }),
+  });
 
   registerForWorkspaceRehydration(() => {
     const nextSession = storage.getItem(wsKey(SESSION_STORAGE_KEY));
@@ -676,6 +745,7 @@ export function createChatStore(options: ChatStoreOptions) {
       selectedProjectId: nextProject,
       inputDrafts: nextDrafts,
       inputDraftAttachments: nextDraftAttachments,
+      conciseModes: readConciseModes(storage, wsKey(CONCISE_MODES_KEY)),
       appliedDraftRestoreIds: readAppliedRestores(storage, wsKey(APPLIED_RESTORES_KEY)),
       pendingSendRestores: readPendingSendRestores(storage, wsKey(PENDING_SEND_RESTORES_KEY)),
     });

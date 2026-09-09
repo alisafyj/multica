@@ -159,6 +159,8 @@ vi.mock("@multica/core/chat", () => {
     selectedAgentId: "agent-1",
     inputDrafts: {} as Record<string, string>,
     inputDraftAttachments: {} as Record<string, unknown[]>,
+    conciseModes: {} as Record<string, boolean>,
+    setConciseMode: vi.fn(),
     setInputDraft: vi.fn((key: string, value: string) => {
       state.inputDrafts[key] = value;
     }),

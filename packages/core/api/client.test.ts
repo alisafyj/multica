@@ -2635,6 +2635,37 @@ describe("ApiClient", () => {
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });
     });
 
+    it("sendChatMessage serialises concise_mode when the option is set and omits it otherwise", async () => {
+      const fetchMock = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z" }), {
+            status: 201,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.sendChatMessage("session-1", "hello", undefined, { conciseMode: true });
+      await client.sendChatMessage("session-1", "standard", undefined, { conciseMode: false });
+      await client.sendChatMessage("session-1", "legacy");
+
+      // Explicit true/false both force the wire key; the omitted option keeps
+      // the legacy body shape so older servers are untouched.
+      expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({
+        content: "hello",
+        concise_mode: true,
+      });
+      expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({
+        content: "standard",
+        concise_mode: false,
+      });
+      expect(JSON.parse(fetchMock.mock.calls[2]![1]?.body as string)).toEqual({
+        content: "legacy",
+      });
+    });
+
     it("sendChatMessage accepts the server's null attachment_ids for text-only sends", async () => {
       vi.stubGlobal(
         "fetch",

@@ -403,3 +403,68 @@ describe("chat store — draft upload ops", () => {
     );
   });
 });
+
+describe("chat store — concise mode selection", () => {
+  const CONCISE_KEY = "multica:chat:concise-modes";
+
+  it("defaults to standard mode for a fresh slot and scopes per session slot", () => {
+    const store = createChatStore({ storage: memStorage() });
+
+    expect(store.getState().conciseModes[DRAFT_NEW_SESSION]).toBeUndefined();
+
+    store.getState().setConciseMode(DRAFT_NEW_SESSION, true);
+    store.getState().setConciseMode("session-1", true);
+
+    expect(store.getState().conciseModes[DRAFT_NEW_SESSION]).toBe(true);
+    expect(store.getState().conciseModes["session-1"]).toBe(true);
+    // An untouched slot stays standard — one session's choice never leaks
+    // into another conversation's composer.
+    expect(store.getState().conciseModes["session-2"]).toBeUndefined();
+  });
+
+  it("persists the selection and survives remount with the same slot", () => {
+    const storage = memStorage();
+    const store = createChatStore({ storage });
+
+    store.getState().setConciseMode("session-9", true);
+
+    expect(JSON.parse(storage.getItem(CONCISE_KEY)!)).toEqual({ "session-9": true });
+
+    const reloaded = createChatStore({ storage });
+    expect(reloaded.getState().conciseModes["session-9"]).toBe(true);
+    expect(reloaded.getState().conciseModes["session-1"]).toBeUndefined();
+  });
+
+  it("prunes false entries so the storage blob only carries explicit opt-ins", () => {
+    const storage = memStorage();
+    const store = createChatStore({ storage });
+
+    store.getState().setConciseMode("session-1", true);
+    store.getState().setConciseMode("session-1", false);
+
+    // Unset IS the standard-mode representation: the read path defaults
+    // through `?? false`, so a cleared slot is indistinguishable from never
+    // opted in.
+    expect(store.getState().conciseModes["session-1"]).toBeUndefined();
+    // An empty map drops the storage key altogether instead of persisting `{}`.
+    expect(storage.getItem(CONCISE_KEY)).toBeNull();
+  });
+
+  it("carries the new-chat slot's choice onto the minted session (SY-326)", () => {
+    const storage = memStorage();
+    const store = createChatStore({ storage });
+
+    // No explicit choice on the new-chat slot: carry is a no-op.
+    store.getState().carryConciseModeToSession("session-1");
+    expect(store.getState().conciseModes["session-1"]).toBeUndefined();
+
+    store.getState().setConciseMode(DRAFT_NEW_SESSION, true);
+    store.getState().carryConciseModeToSession("session-2");
+
+    expect(store.getState().conciseModes["session-2"]).toBe(true);
+    // The new-chat slot is consumed: the next fresh chat starts standard
+    // instead of silently inheriting the previous conversation's mode.
+    expect(store.getState().conciseModes[DRAFT_NEW_SESSION]).toBeUndefined();
+    expect(JSON.parse(storage.getItem(CONCISE_KEY)!)).toEqual({ "session-2": true });
+  });
+});

@@ -24,6 +24,18 @@ const h = vi.hoisted(() => {
     setSelectedProjectId: vi.fn((id: string | null) => {
       store.selectedProjectId = id;
     }),
+    conciseModes: {} as Record<string, boolean>,
+    setConciseMode: vi.fn((sessionId: string, concise: boolean) => {
+      const next = { ...store.conciseModes };
+      if (concise) next[sessionId] = true;
+      else delete next[sessionId];
+      store.conciseModes = next;
+    }),
+    carryConciseModeToSession: vi.fn((sessionId: string) => {
+      if (store.conciseModes["__new__"] !== true) return;
+      store.setConciseMode(sessionId, true);
+      store.setConciseMode("__new__", false);
+    }),
     appliedDraftRestoreIds: [] as string[],
     markDraftRestoreApplied: vi.fn((id: string) => {
       if (!store.appliedDraftRestoreIds.includes(id)) {
@@ -147,6 +159,7 @@ vi.mock("../../common/use-app-foreground", () => ({
   useAppForeground: () => h.appForeground.value,
 }));
 vi.mock("@multica/core/chat", () => ({
+  DRAFT_NEW_SESSION: "__new__",
   useChatStore: Object.assign(
     (sel: (s: typeof h.store) => unknown) => sel(h.store),
     { getState: () => h.store },
@@ -1105,6 +1118,34 @@ describe("useChatController.handleSend — compose target tracking", () => {
       expect.objectContaining({ clearEditor: true, extraDraftKeys: ["new-session"] }),
     );
     expect(h.store.setActiveSession).toHaveBeenCalledWith("new-session");
+  });
+
+  it("carries the new-chat concise choice onto the minted session (SY-326)", async () => {
+    h.store.conciseModes = { __new__: true };
+    const { send } = sendFrom(null);
+    await send();
+
+    expect(h.store.conciseModes).toEqual({ "new-session": true });
+    expect(h.store.conciseModes["__new__"]).toBeUndefined();
+  });
+
+  it("passes the explicit concise mode through to the send request", async () => {
+    h.store.activeSessionId = "sA";
+    h.store.selectedAgentId = "agent-a";
+    h.sessions = [sA];
+    h.agents = [agentA];
+    const { result } = renderHook(() => useChatController());
+
+    await act(async () => {
+      await result.current.handleSend("hello", undefined, undefined, undefined, true);
+    });
+
+    expect(api.sendChatMessage).toHaveBeenCalledWith(
+      "sA",
+      "hello",
+      undefined,
+      { conciseMode: true },
+    );
   });
 
   it("does not create or send a chat for an unbound agent", async () => {
