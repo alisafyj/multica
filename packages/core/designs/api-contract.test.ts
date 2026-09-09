@@ -229,7 +229,9 @@ describe("ApiClient design repository catalogue", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
 
-    await expect(client.listDesignRepositories()).resolves.toEqual(body);
+    await expect(client.listDesignRepositories()).resolves.toEqual({
+      repositories: [{ ...body.repositories[0], description: "" }],
+    });
     expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/design-repositories", expect.anything());
   });
 

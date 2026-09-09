@@ -172,6 +172,40 @@ func TestPrepareProjectDesignSystemRepositoryEvidenceClonesAndIndexesLocalReposi
 	}
 }
 
+func TestResolvedProjectDesignSystemRefRecoversDirectRemoteHead(t *testing.T) {
+	root := t.TempDir()
+	runGitForRepositoryTest(t, root, "init", "-b", "master")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Product\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForRepositoryTest(t, root, "add", "README.md")
+	runGitForRepositoryTest(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial")
+	runGitForRepositoryTest(t, root, "update-ref", "refs/remotes/origin/master", "HEAD")
+	// Reproduce the isolated-checkout shape: origin/HEAD has the right commit,
+	// but is a direct ref rather than a symbolic ref to origin/master.
+	runGitForRepositoryTest(t, root, "update-ref", "refs/remotes/origin/HEAD", "HEAD")
+	runGitForRepositoryTest(t, root, "checkout", "-b", "agent/designer/task-1")
+
+	if got := resolvedProjectDesignSystemRef(context.Background(), root, ""); got != "master" {
+		t.Fatalf("resolved ref = %q, want master", got)
+	}
+}
+
+func TestResolvedProjectDesignSystemRefNeverUsesGeneratedAgentBranch(t *testing.T) {
+	root := t.TempDir()
+	runGitForRepositoryTest(t, root, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Product\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitForRepositoryTest(t, root, "add", "README.md")
+	runGitForRepositoryTest(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial")
+	runGitForRepositoryTest(t, root, "checkout", "-b", "agent/designer/task-2")
+
+	if got := resolvedProjectDesignSystemRef(context.Background(), root, ""); got != "remote-default" {
+		t.Fatalf("resolved ref = %q, want remote-default", got)
+	}
+}
+
 func TestProjectDesignSystemRepositoryStateDetectsCheckoutChanges(t *testing.T) {
 	root := t.TempDir()
 	runGitForRepositoryTest(t, root, "init", "-b", "main")

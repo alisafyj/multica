@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -132,15 +132,16 @@ function stripComments(source: string): string {
 }
 
 function collectSourceFiles(dir: string, found: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (skipDirs.has(entry)) continue;
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (skipDirs.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
       collectSourceFiles(path, found);
       continue;
     }
-    if (!sourceExtensions.some((ext) => entry.endsWith(ext))) continue;
-    if (/\.test\.tsx?$/.test(entry)) continue;
+    if (!entry.isFile()) continue;
+    if (!sourceExtensions.some((ext) => entry.name.endsWith(ext))) continue;
+    if (/\.test\.tsx?$/.test(entry.name)) continue;
     found.push(path);
   }
   return found;
@@ -184,19 +185,18 @@ describe("type scale", () => {
     for (const root of scanRoots) {
       for (const path of collectSourceFiles(resolve(repoRoot, root))) {
         const rel = relative(repoRoot, path);
-        const lines = stripComments(readFileSync(path, "utf8")).split("\n");
-        lines.forEach((line, index) => {
-          for (const { label, regex, hint, appliesTo } of bannedPatterns) {
-            if (!appliesTo(rel)) continue;
-            regex.lastIndex = 0;
-            for (const match of line.matchAll(regex)) {
-              if (rawCssExemptions.some((exempt) => exempt.test(match[0]))) continue;
-              violations.push(
-                `${rel}:${index + 1}  ${match[0].trim()}  (${label} — ${hint})`,
-              );
-            }
+        const source = stripComments(readFileSync(path, "utf8"));
+        for (const { label, regex, hint, appliesTo } of bannedPatterns) {
+          if (!appliesTo(rel)) continue;
+          regex.lastIndex = 0;
+          for (const match of source.matchAll(regex)) {
+            if (rawCssExemptions.some((exempt) => exempt.test(match[0]))) continue;
+            const line = source.slice(0, match.index ?? 0).split("\n").length;
+            violations.push(
+              `${rel}:${line}  ${match[0].trim()}  (${label} — ${hint})`,
+            );
           }
-        });
+        }
       }
     }
 

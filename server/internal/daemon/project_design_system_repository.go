@@ -252,18 +252,75 @@ func resolvedProjectDesignSystemRef(ctx context.Context, root, requested string)
 		return value
 	}
 	if output, err := exec.CommandContext(ctx, "git", "-C", root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").Output(); err == nil {
-		value := strings.TrimSpace(string(output))
-		value = strings.TrimPrefix(value, "origin/")
-		if value != "" {
+		if value := projectDesignSystemRemoteBranchName(string(output)); value != "" {
 			return value
 		}
 	}
+
+	// Isolated checkouts copy the cache's refs/remotes/origin/HEAD as a direct
+	// ref, which loses the symref target even though the checked-out commit is
+	// correct. Recover the human branch name from the remote branch refs that
+	// point at that exact HEAD. Never fall back to the task's agent/* branch.
+	originHead, err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", "refs/remotes/origin/HEAD^{commit}").Output()
+	if err == nil {
+		commit := strings.TrimSpace(string(originHead))
+		refs, refsErr := exec.CommandContext(ctx, "git", "-C", root, "for-each-ref", "--format=%(refname)", "--points-at", commit, "refs/remotes/origin/").Output()
+		if refsErr == nil {
+			var candidates []string
+			for _, ref := range strings.Split(string(refs), "\n") {
+				ref = strings.TrimSpace(ref)
+				if ref == "" || ref == "refs/remotes/origin/HEAD" {
+					continue
+				}
+				if branch := projectDesignSystemRemoteBranchName(ref); branch != "" {
+					candidates = append(candidates, branch)
+				}
+			}
+			if len(candidates) == 1 {
+				return candidates[0]
+			}
+		}
+		// Multiple remote branches can temporarily share the same tip. Ask the
+		// remote only in this ambiguous case; failure stays fail-closed rather
+		// than recording the generated agent branch as provenance.
+		if branch := projectDesignSystemRemoteHeadFromOrigin(ctx, root); branch != "" {
+			return branch
+		}
+		return "remote-default"
+	}
+
+	// A cloned local-directory resource may not have remote-tracking refs. Its
+	// current branch is the source branch rather than a generated agent branch.
 	if output, err := exec.CommandContext(ctx, "git", "-C", root, "branch", "--show-current").Output(); err == nil {
-		if value := strings.TrimSpace(string(output)); value != "" {
+		if value := strings.TrimSpace(string(output)); value != "" && !strings.HasPrefix(value, "agent/") {
 			return value
 		}
 	}
 	return "remote-default"
+}
+
+func projectDesignSystemRemoteBranchName(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "refs/remotes/origin/")
+	value = strings.TrimPrefix(value, "origin/")
+	if value == "" || value == "HEAD" {
+		return ""
+	}
+	return value
+}
+
+func projectDesignSystemRemoteHeadFromOrigin(ctx context.Context, root string) string {
+	output, err := exec.CommandContext(ctx, "git", "-C", root, "ls-remote", "--symref", "origin", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD" {
+			return strings.TrimPrefix(fields[1], "refs/heads/")
+		}
+	}
+	return ""
 }
 
 func mustProjectDesignSystemCommit(ctx context.Context, root string) string {
