@@ -1,6 +1,7 @@
 import { configStore } from "../config";
 import type {
   Issue,
+  CommentDesignRequest,
   IssuePriority,
   IssueMetadata,
   BatchUpdateIssuesResponse,
@@ -223,6 +224,7 @@ import type {
   SetDesignAssetRepositoryAssociationResponse,
   DesignDocument,
   DesignDocumentRevision,
+  DesignDocumentLivePreview,
   ListDesignDocumentRevisionsResponse,
   ListDesignDocumentsResponse,
   ListDesignRepositoriesResponse,
@@ -543,6 +545,7 @@ import {
   EMPTY_RESOURCE_LABELS_RESPONSE,
   DesignDeliverySchema,
   DesignDocumentSchema,
+  DesignDocumentLivePreviewSchema,
   DesignDocumentRevisionSchema,
   EMPTY_DESIGN_DOCUMENT_REVISION,
   ListDesignDocumentRevisionsResponseSchema,
@@ -1544,8 +1547,9 @@ export class ApiClient {
     parentId?: string,
     attachmentIds?: string[],
     suppressAgentIds?: string[],
+    designRequest?: CommentDesignRequest,
   ): Promise<Comment> {
-    return this.fetch(`/api/issues/${issueId}/comments`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`, {
       method: "POST",
       body: JSON.stringify({
         content,
@@ -1553,7 +1557,11 @@ export class ApiClient {
         ...(parentId ? { parent_id: parentId } : {}),
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+        ...(designRequest ? { design_request: designRequest } : {}),
       }),
+    });
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "POST /api/issues/:id/comments",
     });
   }
 
@@ -4666,6 +4674,17 @@ export class ApiClient {
     return parseWithFallback(raw, DesignDocumentSchema, { ...EMPTY_DESIGN_DOCUMENT, id: documentId }, {
       endpoint: "GET /api/design-documents/{id}",
     });
+  }
+
+  async getDesignDocumentLivePreview(documentId: string, taskId: string): Promise<DesignDocumentLivePreview | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/design-documents/${encodeURIComponent(documentId)}/live-preview?task_id=${encodeURIComponent(taskId)}`,
+    );
+    if (raw == null) return null;
+    const preview = parseWithFallback<DesignDocumentLivePreview | null>(raw, DesignDocumentLivePreviewSchema, null, {
+      endpoint: "GET /api/design-documents/{id}/live-preview",
+    });
+    return preview?.task_id === taskId && preview.document_id === documentId ? preview : null;
   }
 
   async listDesignDocumentRevisions(documentId: string): Promise<ListDesignDocumentRevisionsResponse> {

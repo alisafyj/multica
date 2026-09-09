@@ -120,6 +120,8 @@ type designDocumentInputSnapshot struct {
 	// the inputs so a regeneration reruns under the same choice (DC-060).
 	DesignSystemID      string `json:"design_system_id,omitempty"`
 	BuiltinDesignSystem string `json:"builtin_design_system,omitempty"`
+	// Explicit choice belongs only to comment delivery; legacy launcher defaults stay unchanged.
+	DesignSystemChoice string `json:"design_system_choice,omitempty"`
 	// ResolvedDesignContext is server-derived after request validation. It is
 	// frozen beside the user choice so regeneration cannot reinterpret a mutable
 	// saved slot. It is never decoded from client JSON.
@@ -760,18 +762,38 @@ func (h *Handler) createDesignDocumentTask(
 	}
 	defer tx.Rollback(ctx)
 	queries := h.Queries.WithTx(tx)
+	document, task, err := h.enqueueDesignDocumentTask(ctx, queries, workspaceID, requesterID, projectID, scope, issueID, agentID, title, input, inputJSON, attachments)
+	if err != nil {
+		return db.DesignDocument{}, db.AgentTaskQueue{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to commit design generation")
+	}
+	return document, task, nil
+}
+
+func (h *Handler) enqueueDesignDocumentTask(
+	ctx context.Context, queries *db.Queries, workspaceID, requesterID, projectID pgtype.UUID,
+	scope projectDesignSystemScope, issueID, agentID pgtype.UUID, title string,
+	input designDocumentInputSnapshot, inputJSON []byte, attachments []designDocumentAttachmentSnapshot,
+) (db.DesignDocument, db.AgentTaskQueue, error) {
+	var workspaceRepositoryID pgtype.UUID
+	if input.WorkspaceRepositoryID != "" {
+		workspaceRepositoryID = parseUUID(input.WorkspaceRepositoryID)
+	}
 
 	document, err := queries.CreateDesignDocument(ctx, db.CreateDesignDocumentParams{
-		WorkspaceID:       workspaceID,
-		ProjectID:         projectID,
-		ProjectResourceID: scope.ProjectResourceID,
-		IssueID:           issueID,
-		Title:             title,
-		Platform:          input.Platform,
-		Recipe:            input.Recipe,
-		CurrentAgentID:    agentID,
-		InputSnapshot:     inputJSON,
-		CreatedBy:         requesterID,
+		WorkspaceID:           workspaceID,
+		ProjectID:             projectID,
+		ProjectResourceID:     scope.ProjectResourceID,
+		WorkspaceRepositoryID: workspaceRepositoryID,
+		IssueID:               issueID,
+		Title:                 title,
+		Platform:              input.Platform,
+		Recipe:                input.Recipe,
+		CurrentAgentID:        agentID,
+		InputSnapshot:         inputJSON,
+		CreatedBy:             requesterID,
 	})
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("create_failed", "failed to create design document")
@@ -822,9 +844,6 @@ func (h *Handler) createDesignDocumentTask(
 	})
 	if err != nil {
 		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("update_failed", "failed to attach the design task")
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.DesignDocument{}, db.AgentTaskQueue{}, projectDesignSystemInternalError("transaction_failed", "failed to commit design generation")
 	}
 	return document, task, nil
 }
@@ -906,6 +925,25 @@ func designDocumentPinnedContext(document db.DesignDocument, input designDocumen
 	invalid := &projectDesignSystemRequestError{
 		status: http.StatusUnprocessableEntity, code: "design_context_invalid",
 		message: "the stored repository design context is missing or invalid",
+	}
+	if input.DesignSystemChoice != "" {
+		if input.ResolvedDesignContext == nil || input.ResolvedDesignContext.ProjectID != uuidToString(document.ProjectID) {
+			return service.ResolvedDesignContext{}, invalid
+		}
+		pinned := *input.ResolvedDesignContext
+		switch input.DesignSystemChoice {
+		case "none":
+			if input.DesignSystemID != "" || pinned.Source != service.DesignContextSourceNone || pinned.Package != nil || pinned.Builtin != nil || pinned.Digest != "" {
+				return service.ResolvedDesignContext{}, invalid
+			}
+		case "selected":
+			if pinned.Package == nil || pinned.Package.DesignSystemID != input.DesignSystemID || pinned.Digest == "" || pinned.Package.SavedPackageID == "" || pinned.Package.ArchiveObjectKey == "" {
+				return service.ResolvedDesignContext{}, invalid
+			}
+		default:
+			return service.ResolvedDesignContext{}, invalid
+		}
+		return pinned, nil
 	}
 	if document.ProjectResourceID.Valid {
 		if input.ResolvedDesignContext == nil {

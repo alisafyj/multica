@@ -37,16 +37,16 @@ func (h *Handler) DownloadDesignDocumentDesignSystem(w http.ResponseWriter, r *h
 	}
 	var designContext service.ResolvedDesignContext
 	if json.Unmarshal(taskContext.DesignContext, &designContext) != nil ||
-		designContext.Source != service.DesignContextSourceCloudSavedRepository ||
 		designContext.Package == nil || designContext.ProjectID == "" ||
-		designContext.Package.Scope != service.DesignContextScopeRepository ||
-		designContext.Package.ProjectID == "" || designContext.Package.ProjectResourceID == "" ||
 		designContext.Package.DesignSystemID == "" || designContext.Package.SavedPackageID == "" ||
 		designContext.Package.ArchiveObjectKey == "" || designContext.Digest != taskContext.DesignSystemDigest {
 		writeDesignDocumentDesignSystemUnavailable(w)
 		return
 	}
-	if taskContext.ProjectID != designContext.ProjectID || taskContext.ProjectResourceID != designContext.Package.ProjectResourceID {
+	repositoryScope := designContext.Source == service.DesignContextSourceCloudSavedRepository && designContext.Package.Scope == service.DesignContextScopeRepository &&
+		designContext.Package.ProjectID == taskContext.ProjectID && designContext.Package.ProjectResourceID == taskContext.ProjectResourceID && taskContext.ProjectResourceID != ""
+	explicitScope := designContext.Source == service.DesignContextSourceCloudSavedWorkspace && designContext.Package.Scope == service.DesignContextScopeWorkspace
+	if taskContext.ProjectID != designContext.ProjectID || (!repositoryScope && !explicitScope) {
 		writeDesignDocumentDesignSystemUnavailable(w)
 		return
 	}

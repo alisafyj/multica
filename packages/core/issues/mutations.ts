@@ -30,6 +30,7 @@ import { useRecentIssuesStore } from "./stores";
 import type { InboxItem, Issue, IssueReaction } from "../types";
 import type {
   CreateCommentSubIssueManualRequest,
+  CommentDesignRequest,
   CreateIssueRequest,
   ListIssuesCache,
   MoveIssueRequest,
@@ -759,13 +760,15 @@ export function useCreateComment(issueId: string) {
       parentId,
       attachmentIds,
       suppressAgentIds,
+      designRequest,
     }: {
       content: string;
       type?: string;
       parentId?: string;
       attachmentIds?: string[];
       suppressAgentIds?: string[];
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
+      designRequest?: CommentDesignRequest;
+    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds, designRequest),
     onSuccess: (comment) => {
       if (comment.issue_revision) {
         onIssueAuxiliaryRevision(qc, wsId, issueId, comment.issue_revision);
@@ -781,6 +784,7 @@ export function useCreateComment(issueId: string) {
         content: comment.content,
         parent_id: comment.parent_id,
         comment_type: comment.type,
+        design_delivery: comment.design_delivery,
         reactions: comment.reactions ?? [],
         attachments: comment.attachments ?? [],
         created_at: comment.created_at,

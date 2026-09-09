@@ -346,6 +346,15 @@ export function designDocumentDetailOptions(wsId: string, documentId: string) {
   });
 }
 
+export function designDocumentLivePreviewOptions(wsId: string, documentId: string, taskId: string) {
+  return queryOptions({
+    queryKey: [...designKeys.document(wsId, documentId), "live-preview", taskId],
+    queryFn: () => api.getDesignDocumentLivePreview(documentId, taskId),
+    enabled: !!wsId && !!documentId && !!taskId,
+    refetchInterval: 3000,
+  });
+}
+
 /** The revision timeline of one document, newest first. */
 export function designDocumentRevisionListOptions(wsId: string, documentId: string) {
   return queryOptions({

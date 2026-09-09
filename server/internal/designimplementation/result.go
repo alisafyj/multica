@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -44,6 +45,7 @@ type PreviewEvidence struct {
 	FrameRef string `json:"frame_ref"`
 	Status   string `json:"status"`
 	Path     string `json:"path,omitempty"`
+	URL      string `json:"url,omitempty"`
 	Summary  string `json:"summary,omitempty"`
 }
 
@@ -100,6 +102,12 @@ func Validate(result Result) error {
 		}
 		if preview.Path != "" && !boundedRelativePath(preview.Path) {
 			return fmt.Errorf("implementation_result_invalid: preview path %q must be a bounded relative path", preview.Path)
+		}
+		if preview.URL != "" {
+			parsed, err := url.Parse(preview.URL)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" || strings.ContainsAny(preview.URL, "\\ \t\r\n") {
+				return errors.New("implementation_result_invalid: preview URL must be an absolute HTTP(S) URL with a host and no credentials")
+			}
 		}
 		if preview.Path == "" && strings.TrimSpace(preview.Summary) == "" {
 			return errors.New("implementation_result_invalid: preview path or summary is required")

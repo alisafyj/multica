@@ -77,7 +77,8 @@ type CommentResponse struct {
 	// was blocked (no invoke permission, target unavailable, runtime offline) now
 	// reports that here instead of silently dropping the trigger, so the client
 	// can show "comment posted, but N targets were not triggered".
-	TriggerOutcomes []CommentTriggerOutcome `json:"trigger_outcomes,omitempty"`
+	TriggerOutcomes []CommentTriggerOutcome        `json:"trigger_outcomes,omitempty"`
+	DesignDelivery  *CommentDesignDeliveryResponse `json:"design_delivery,omitempty"`
 }
 
 // CommentTriggerOutcome is the per-target result of an explicit @agent / @squad
@@ -115,6 +116,7 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 		ResolvedByID:   uuidToPtr(c.ResolvedByID),
 		SourceTaskID:   uuidToPtr(c.SourceTaskID),
 		QuickActionID:  uuidToPtr(c.QuickActionID),
+		DesignDelivery: commentDesignDeliveryResponse(c.DesignDelivery),
 		Reactions:      reactions,
 		Attachments:    attachments,
 	}
@@ -803,6 +805,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 					ResolvedByID:   r.ResolvedByID,
 					SourceTaskID:   r.SourceTaskID,
 					QuickActionID:  r.QuickActionID,
+					DesignDelivery: r.DesignDelivery,
 					Revision:       r.Revision,
 				}
 				if !r.ParentID.Valid {
@@ -897,6 +900,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 				ResolvedByID:   r.ResolvedByID,
 				SourceTaskID:   r.SourceTaskID,
 				QuickActionID:  r.QuickActionID,
+				DesignDelivery: r.DesignDelivery,
 				Revision:       r.Revision,
 			}
 			if !r.ParentID.Valid {
@@ -985,6 +989,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 				ResolvedByID:   r.ResolvedByID,
 				SourceTaskID:   r.SourceTaskID,
 				QuickActionID:  r.QuickActionID,
+				DesignDelivery: r.DesignDelivery,
 				Revision:       r.Revision,
 			})
 		}
@@ -1045,6 +1050,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 					ParentID: r.ParentID, WorkspaceID: r.WorkspaceID, ResolvedAt: r.ResolvedAt,
 					ResolvedByType: r.ResolvedByType, ResolvedByID: r.ResolvedByID,
 					SourceTaskID: r.SourceTaskID, QuickActionID: r.QuickActionID, Revision: r.Revision,
+					DesignDelivery: r.DesignDelivery,
 				}
 				stats[uuidToString(r.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
 			}
@@ -1075,6 +1081,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 				ParentID: r.ParentID, WorkspaceID: r.WorkspaceID, ResolvedAt: r.ResolvedAt,
 				ResolvedByType: r.ResolvedByType, ResolvedByID: r.ResolvedByID,
 				SourceTaskID: r.SourceTaskID, QuickActionID: r.QuickActionID, Revision: r.Revision,
+				DesignDelivery: r.DesignDelivery,
 			}
 			stats[uuidToString(r.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
 		}
@@ -1459,11 +1466,12 @@ func keepRootConnected(byID map[string]db.Comment) []db.Comment {
 }
 
 type CreateCommentRequest struct {
-	Content          string   `json:"content"`
-	Type             string   `json:"type"`
-	ParentID         *string  `json:"parent_id"`
-	AttachmentIDs    []string `json:"attachment_ids"`
-	SuppressAgentIDs []string `json:"suppress_agent_ids"`
+	Content          string                `json:"content"`
+	Type             string                `json:"type"`
+	ParentID         *string               `json:"parent_id"`
+	AttachmentIDs    []string              `json:"attachment_ids"`
+	SuppressAgentIDs []string              `json:"suppress_agent_ids"`
+	DesignRequest    *CommentDesignRequest `json:"design_request,omitempty"`
 }
 
 type CommentTriggerPreviewRequest struct {
@@ -1884,6 +1892,10 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			rootComment = &root
 		}
 	}
+	if req.DesignRequest != nil {
+		h.createCommentDesignDelivery(w, r, issue, req, parentID, rootComment, authorType, authorID)
+		return
+	}
 
 	created, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
 		ID:           dbid.NewV7(),
@@ -1982,7 +1994,7 @@ func isNoteComment(content string) bool {
 // deferred / blocked from enqueue. UI-suppressed triggers (the user unchecked
 // them) are removed before enqueue and produce no outcome.
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID, originatorUserID, delegationAuthorityUserID string, suppressAgentIDs []pgtype.UUID) []CommentTriggerOutcome {
-	if isNoteComment(comment.Content) {
+	if len(comment.DesignDelivery) > 0 || isNoteComment(comment.Content) {
 		return nil
 	}
 	triggers, targets := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{
@@ -3313,7 +3325,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	sourceTaskID := existing.SourceTaskID
 	var triggerIssue *db.Issue
 	var cancelled []db.AgentTaskQueue
-	if oldContent != req.Content {
+	if oldContent != req.Content && len(existing.DesignDelivery) == 0 {
 		triggerIssue = &issue
 		// A content edit is a NEW action, so its delegation lineage must key on THIS
 		// edit. Only the AGENT author re-editing its OWN comment carries the lineage
@@ -3376,7 +3388,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			comment = updated.Comment()
 			issueRevision = updated.IssueRevision
 		}
-		if err == nil && oldContent != req.Content && strictContentEdit {
+		if err == nil && oldContent != req.Content && strictContentEdit && len(existing.DesignDelivery) == 0 {
 			cancelled, err = qtx.CancelAgentTasksByTriggerComment(r.Context(), existing.ID)
 			if err == nil {
 				err = service.SettleDeliveredDelegatedFailureRecoveries(r.Context(), qtx, cancelled...)
@@ -3432,7 +3444,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	retriggerEditedComment := func() []CommentTriggerOutcome {
-		if oldContent == comment.Content {
+		if oldContent == comment.Content || len(existing.DesignDelivery) > 0 {
 			return nil
 		}
 		issue := *triggerIssue

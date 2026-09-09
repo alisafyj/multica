@@ -68,6 +68,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { ActorAvatar } from "../common/actor-avatar";
 import { useNavigation } from "../navigation";
+import { useT } from "../i18n";
 import {
   PickerEmpty,
   PickerItem,
@@ -351,6 +352,7 @@ export function AgentSetting({
   agentId: string;
   onChange: (agentId: string) => void;
 }) {
+  const { t } = useT("issues");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const active = useMemo(() => agents.filter((agent) => !agent.archived_at), [agents]);
@@ -365,9 +367,9 @@ export function AgentSetting({
       width="w-56"
       align="start"
       searchable
-      searchPlaceholder="搜索智能体…"
+      searchPlaceholder={t(($) => $.design_delivery.search_agents)}
       onSearchChange={setFilter}
-      triggerRender={<SettingTrigger filled={!!selected} aria-label="设计智能体" />}
+      triggerRender={<SettingTrigger filled={!!selected} aria-label={t(($) => $.design_delivery.agent)} />}
       trigger={
         selected ? (
           <>
@@ -377,7 +379,7 @@ export function AgentSetting({
         ) : (
           <>
             <Bot className="size-3.5 shrink-0" />
-            <span className="truncate">选择智能体</span>
+            <span className="truncate">{t(($) => $.design_delivery.select_agent)}</span>
           </>
         )
       }
@@ -394,7 +396,7 @@ export function AgentSetting({
               key={agent.id}
               selected={agent.id === agentId}
               disabled={!runtimeBound}
-              tooltip={runtimeBound ? undefined : "该智能体尚未绑定运行时，无法领取设计任务"}
+              tooltip={runtimeBound ? undefined : t(($) => $.design_delivery.agent_unbound)}
               onClick={() => {
                 onChange(agent.id);
                 setOpen(false);
@@ -416,17 +418,20 @@ export function AgentSetting({
  * named row rather than a clear affordance, and the copy below the row spells
  * out what each choice means for the result.
  */
-function RepositorySetting({
+export function RepositorySetting({
   repositories,
   repositoryId,
   disabled,
   onChange,
+  required = false,
 }: {
   repositories: ProjectResource[];
   repositoryId: string;
   disabled: boolean;
   onChange: (repositoryId: string) => void;
+  required?: boolean;
 }) {
+  const { t } = useT("issues");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const selected = repositories.find((repository) => repository.id === repositoryId);
@@ -442,10 +447,10 @@ function RepositorySetting({
       width="w-64"
       align="start"
       searchable
-      searchPlaceholder="搜索仓库…"
+      searchPlaceholder={t(($) => $.design_delivery.search_repositories)}
       onSearchChange={setFilter}
       triggerRender={
-        <SettingTrigger filled={!!selected} disabled={disabled} aria-label="代码仓库" />
+        <SettingTrigger filled={!!selected} disabled={disabled} aria-label={t(($) => $.design_delivery.repository)} />
       }
       trigger={
         selected ? (
@@ -456,12 +461,12 @@ function RepositorySetting({
         ) : (
           <>
             <GitBranch className="size-3.5 shrink-0" />
-            <span className="truncate">不指定仓库</span>
+            <span className="truncate">{required ? t(($) => $.design_delivery.select_repository) : t(($) => $.design_delivery.no_repository)}</span>
           </>
         )
       }
     >
-      <PickerItem
+      {!required && <PickerItem
         selected={!repositoryId}
         onClick={() => {
           onChange("");
@@ -469,8 +474,8 @@ function RepositorySetting({
         }}
       >
         <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">不指定仓库</span>
-      </PickerItem>
+        <span className="truncate">{t(($) => $.design_delivery.no_repository)}</span>
+      </PickerItem>}
       {filtered.map((repository) => (
         <PickerItem
           key={repository.id}
@@ -487,7 +492,7 @@ function RepositorySetting({
       ))}
       {repositories.length === 0 ? (
         <div className="px-2 py-1.5 text-caption text-muted-foreground">
-          当前项目还没有关联代码仓库。
+          {t(($) => $.design_delivery.repositories_empty)}
         </div>
       ) : null}
       {repositories.length > 0 && filtered.length === 0 && query ? <PickerEmpty /> : null}
@@ -736,6 +741,7 @@ export function DesignSystemSetting({
   builtinSlug: string;
   onChange: (selection: { designSystemId: string; builtinSlug: string }) => void;
 }) {
+  const { t } = useT("issues");
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const query = filter.trim().toLowerCase();
@@ -762,16 +768,16 @@ export function DesignSystemSetting({
       width="w-72"
       align="start"
       searchable
-      searchPlaceholder="搜索设计体系…"
+      searchPlaceholder={t(($) => $.design_delivery.search_systems)}
       onSearchChange={setFilter}
       triggerRender={
-        <SettingTrigger filled={!!selectedWorkspace || !!selectedBuiltin} aria-label="设计体系" />
+        <SettingTrigger filled={!!selectedWorkspace || !!selectedBuiltin} aria-label={t(($) => $.design_delivery.system)} />
       }
       trigger={
         <>
           <Palette className="size-3.5 shrink-0" />
           <span className="truncate">
-            {selectedWorkspace?.name ?? selectedBuiltin?.name ?? "不指定设计体系"}
+            {selectedWorkspace?.name ?? selectedBuiltin?.name ?? t(($) => $.design_delivery.no_system)}
           </span>
         </>
       }
@@ -782,11 +788,11 @@ export function DesignSystemSetting({
         onClick={() => pick({ designSystemId: "", builtinSlug: "" })}
       >
         <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate text-muted-foreground">不指定设计体系</span>
+        <span className="truncate text-muted-foreground">{t(($) => $.design_delivery.no_system)}</span>
       </PickerItem>
       {filteredWorkspace.length > 0 ? (
         <div className="px-2 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-muted-foreground">
-          你的体系
+          {t(($) => $.design_delivery.your_systems)}
         </div>
       ) : null}
       {filteredWorkspace.map((system) => (
@@ -802,7 +808,7 @@ export function DesignSystemSetting({
       ))}
       {filteredBuiltin.length > 0 ? (
         <div className="px-2 pb-1 pt-2 text-micro font-semibold uppercase tracking-wider text-muted-foreground">
-          官方预设
+          {t(($) => $.design_delivery.builtin_systems)}
         </div>
       ) : null}
       {filteredBuiltin.map((system) => (

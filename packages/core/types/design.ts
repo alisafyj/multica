@@ -87,6 +87,14 @@ export interface BuildDesignImplementationPromptResponse {
   context: DesignImplementationContextResponse;
 }
 
+export interface DesignImplementationPreviewEvidence {
+  frame_ref: string;
+  status: string;
+  path: string;
+  summary: string;
+  url?: string;
+}
+
 export type DesignRestoreTaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type DesignRestoreTargetKind = "component" | "file" | "symbol" | "route" | "unknown";
 export type DesignRestoreTaskPurpose = "frontend_restore" | "ui_generation" | "template_annotation";
@@ -862,6 +870,15 @@ export interface DesignDocument {
   created_at: string;
   updated_at: string;
   saved_at: string;
+}
+
+export interface DesignDocumentLivePreview {
+  task_id: string;
+  document_id: string;
+  content_digest: string;
+  files: Record<string, string>;
+  entry_path: string;
+  updated_at: string;
 }
 
 export interface ListDesignDocumentsResponse {

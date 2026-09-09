@@ -2484,7 +2484,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				ID:          effectiveTriggerUUID,
 				WorkspaceID: runtime.WorkspaceID,
 			}); err == nil {
-				resp.TriggerCommentContent = comment.Content
+				resp.TriggerCommentContent = commentDesignDeliveryContent(comment)
 				resp.TriggerThreadID = uuidToString(comment.ID)
 				if comment.ParentID.Valid {
 					resp.TriggerThreadID = uuidToString(comment.ParentID)
@@ -4965,7 +4965,7 @@ func (h *Handler) buildCoalescedCommentData(ctx context.Context, workspaceID pgt
 			ID:         uuidToString(comment.ID),
 			ThreadID:   uuidToString(comment.ID),
 			AuthorType: comment.AuthorType,
-			Content:    comment.Content,
+			Content:    commentDesignDeliveryContent(comment),
 			CreatedAt:  timestampToString(comment.CreatedAt),
 		}
 		if comment.ParentID.Valid {

@@ -37,7 +37,7 @@ func TestCollectReceiptBindsResultAndRepositoryEvidence(t *testing.T) {
 		RepositoryCommitBefore: commit, Status: "completed",
 		Mappings:        []Mapping{{FrameRef: "frame-1", TargetFiles: []string{"src/page.tsx"}, TargetComponents: []string{"Page"}}},
 		Commands:        []CommandResult{{Command: "pnpm test", Status: "passed", Summary: "passed"}},
-		PreviewEvidence: []PreviewEvidence{{FrameRef: "frame-1", Status: "passed", Path: "artifacts/frame-1.png"}},
+		PreviewEvidence: []PreviewEvidence{{FrameRef: "frame-1", Status: "passed", Path: "artifacts/frame-1.png", URL: "https://preview.example.test/frame-1"}},
 	}
 	writeReceiptJSON(t, root, resultRelativePath, result)
 	writeReceiptFile(t, root, "src/page.tsx", "export const Page = true;\n")
@@ -52,6 +52,9 @@ func TestCollectReceiptBindsResultAndRepositoryEvidence(t *testing.T) {
 	}
 	if receipt.ResultDigest == "" || len(receipt.TargetFiles) != 1 || receipt.TargetFiles[0] != "src/page.tsx" || len(receipt.PreviewPaths) != 1 {
 		t.Fatalf("receipt evidence = %+v", receipt)
+	}
+	if receipt.Result.PreviewEvidence[0].URL != result.PreviewEvidence[0].URL {
+		t.Fatal("daemon receipt dropped the explicit implementation preview URL")
 	}
 	if err := os.Setenv("MULTICA_DESIGN_ASSET_REF_KEY", secret); err != nil {
 		t.Fatal(err)

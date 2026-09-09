@@ -3726,17 +3726,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Status != nil {
-		issueForCompletionCheck := prevIssue
-		if req.Title != nil {
-			issueForCompletionCheck.Title = *req.Title
-		}
-		if !h.canCompleteUIDesignIssue(r.Context(), issueForCompletionCheck, *req.Status) {
-			writeError(w, http.StatusConflict, uiDesignDeliveryRequiredBeforeDoneMessage)
-			return
-		}
-	}
-
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
 		return
@@ -4522,23 +4511,6 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		_, batchTouchedID := rawUpdates["assignee_id"]
 		if batchTouchedType || batchTouchedID {
 			if status, _ := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID, scopeExistingIssue(&prevIssue)); status != 0 {
-				continue
-			}
-		}
-
-		if req.Updates.Status != nil {
-			issueForCompletionCheck := prevIssue
-			if req.Updates.Title != nil {
-				issueForCompletionCheck.Title = *req.Updates.Title
-			}
-			if !h.canCompleteUIDesignIssue(r.Context(), issueForCompletionCheck, *req.Updates.Status) {
-				prefix := h.getIssuePrefix(r.Context(), prevIssue.WorkspaceID)
-				skipped = append(skipped, BatchUpdateIssueSkippedResponse{
-					IssueID:    uuidToString(prevIssue.ID),
-					Identifier: prefix + "-" + strconv.Itoa(int(prevIssue.Number)),
-					Title:      prevIssue.Title,
-					Reason:     uiDesignDeliveryRequiredBeforeDoneMessage,
-				})
 				continue
 			}
 		}

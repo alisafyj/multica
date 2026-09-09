@@ -78,6 +78,7 @@ INSERT INTO design_document (
     workspace_id,
     project_id,
     project_resource_id,
+    workspace_repository_id,
     issue_id,
     title,
     platform,
@@ -100,7 +101,8 @@ SELECT
     $9,
     $10,
     $11,
-    $12
+    $12,
+    $13
 FROM project
 WHERE project.id = $2
   AND project.workspace_id = $1
@@ -108,18 +110,19 @@ RETURNING id, workspace_id, project_id, project_resource_id, issue_id, title, pl
 `
 
 type CreateDesignDocumentParams struct {
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	ProjectID         pgtype.UUID `json:"project_id"`
-	ProjectResourceID pgtype.UUID `json:"project_resource_id"`
-	IssueID           pgtype.UUID `json:"issue_id"`
-	Title             string      `json:"title"`
-	Platform          string      `json:"platform"`
-	Recipe            string      `json:"recipe"`
-	CurrentAgentID    pgtype.UUID `json:"current_agent_id"`
-	ActiveTaskID      pgtype.UUID `json:"active_task_id"`
-	ActiveOperation   pgtype.Text `json:"active_operation"`
-	InputSnapshot     []byte      `json:"input_snapshot"`
-	CreatedBy         pgtype.UUID `json:"created_by"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	ProjectResourceID     pgtype.UUID `json:"project_resource_id"`
+	WorkspaceRepositoryID pgtype.UUID `json:"workspace_repository_id"`
+	IssueID               pgtype.UUID `json:"issue_id"`
+	Title                 string      `json:"title"`
+	Platform              string      `json:"platform"`
+	Recipe                string      `json:"recipe"`
+	CurrentAgentID        pgtype.UUID `json:"current_agent_id"`
+	ActiveTaskID          pgtype.UUID `json:"active_task_id"`
+	ActiveOperation       pgtype.Text `json:"active_operation"`
+	InputSnapshot         []byte      `json:"input_snapshot"`
+	CreatedBy             pgtype.UUID `json:"created_by"`
 }
 
 // Design Document persistence (P-011 / DC-042).
@@ -135,6 +138,7 @@ func (q *Queries) CreateDesignDocument(ctx context.Context, arg CreateDesignDocu
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.ProjectResourceID,
+		arg.WorkspaceRepositoryID,
 		arg.IssueID,
 		arg.Title,
 		arg.Platform,
@@ -338,6 +342,10 @@ WITH deleted_shares AS (
     WHERE design_document_share.workspace_id = $1
       AND design_document_share.design_document_id = $2
     RETURNING design_document_share.id
+),
+deleted_live_previews AS (
+    DELETE FROM design_document_live_preview
+    WHERE workspace_id = $1 AND document_id = $2
 ),
 deleted_revisions AS (
     DELETE FROM design_document_revision

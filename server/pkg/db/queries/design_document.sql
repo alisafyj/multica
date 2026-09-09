@@ -12,6 +12,7 @@ INSERT INTO design_document (
     workspace_id,
     project_id,
     project_resource_id,
+    workspace_repository_id,
     issue_id,
     title,
     platform,
@@ -26,6 +27,7 @@ SELECT
     sqlc.arg('workspace_id'),
     sqlc.arg('project_id'),
     sqlc.narg('project_resource_id'),
+    sqlc.narg('workspace_repository_id'),
     sqlc.narg('issue_id'),
     sqlc.arg('title'),
     sqlc.arg('platform'),
@@ -260,6 +262,10 @@ WITH deleted_shares AS (
     WHERE design_document_share.workspace_id = sqlc.arg('workspace_id')
       AND design_document_share.design_document_id = sqlc.arg('id')
     RETURNING design_document_share.id
+),
+deleted_live_previews AS (
+    DELETE FROM design_document_live_preview
+    WHERE workspace_id = sqlc.arg('workspace_id') AND document_id = sqlc.arg('id')
 ),
 deleted_revisions AS (
     DELETE FROM design_document_revision

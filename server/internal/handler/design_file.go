@@ -62,13 +62,6 @@ func designRestoreAgentLabelFromInput(input json.RawMessage) string {
 	return "前端 Agent"
 }
 
-func (h *Handler) canCompleteUIDesignIssue(ctx context.Context, issue db.Issue, nextStatus string) bool {
-	if issue.Status == "done" || nextStatus != "done" || !isUIDesignIssue(issue) {
-		return true
-	}
-	return h.uiDesignDelivered(ctx, issue)
-}
-
 type designRestoreResultSummary struct {
 	Status                   string                     `json:"status"`
 	Summary                  string                     `json:"summary"`

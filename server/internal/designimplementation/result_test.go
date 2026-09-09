@@ -95,3 +95,35 @@ func TestValidateResultDoesNotTreatRepositoryRootAsAFile(t *testing.T) {
 		t.Fatal("repository root accepted as a target file")
 	}
 }
+
+func TestPreviewURLRejectsUnsafeSchemesAndCredentials(t *testing.T) {
+	result := Result{
+		SchemaVersion: ResultSchemaV1, DesignRef: "design-1", RevisionID: "revision-1",
+		RepositoryCommitBefore: "commit-1", Status: "partial",
+		PreviewEvidence: []PreviewEvidence{{FrameRef: "frame-1", Status: "passed", Path: "artifacts/preview.json"}},
+	}
+	for _, address := range []string{"javascript:alert(1)", "file:///tmp/preview.html", "https://user:password@example.test/", "http:///preview", "//example.test/preview", "https://example.test/a b", "https://example.test\\@other.test/"} {
+		result.PreviewEvidence[0].URL = address
+		raw, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ValidateJSON(raw); err == nil {
+			t.Errorf("unsafe preview URL accepted: %q", address)
+		}
+	}
+	for _, address := range []string{"", "https://preview.example.test/settings?mode=preview#account", "http://localhost:5173/settings", "http://[::1]:5173/settings"} {
+		result.PreviewEvidence[0].URL = address
+		raw, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ValidateJSON(raw)
+		if err != nil {
+			t.Fatalf("valid preview URL rejected: %q: %v", address, err)
+		}
+		if parsed.PreviewEvidence[0].URL != address || parsed.PreviewEvidence[0].Path != "artifacts/preview.json" {
+			t.Fatal("preview URL round trip changed the separate evidence path")
+		}
+	}
+}

@@ -112,6 +112,7 @@ func (h *Handler) BuildDesignImplementationPrompt(w http.ResponseWriter, r *http
 	}
 	prompt := fmt.Sprintf("【任务】\n根据关联设计稿实现当前任务，优先复用目标仓库已有组件和页面结构。\n\n【设计稿】\n标题：%s\n固定版本：%s\n所选 Frame：\n%s\n目标仓库：%s\n\n【执行步骤】\n1. 调用 multica_design_get_implementation_context。任务身份由运行时绑定，不要手抄设计引用，参数使用空对象：\n```json\n{}\n```\n2. 读取目标仓库路由、组件、状态管理和样式规范。\n3. 根据 Implementation Context 完成实现。\n4. 运行约定验证，并把渲染后的 DOM、资源加载和计算布局检查写入任务工作目录中的文本或 JSON 证据文件。\n5. 写入 `.agent_context/design_implementation/result/implementation-result.json`，严格使用以下 `multica.design-implementation-result/v1` 字段，不得添加其他字段：\n```json\n%s\n```\n6. completed 结果的每个 Frame 都必须有 mapping 和 preview_evidence；每个 command 必须有 status 与 summary；preview_evidence 必须有实际存在的 path；partial/blocked/failed/cancelled 也必须写入结果。\n7. 调用 multica_design_validate_implementation_result，验证通过后只返回简短摘要；daemon 会直接收集已验证文件。\n\n【约束】\n禁止整图替代；禁止直接复制 Prototype；保留无关 dirty worktree。\n不要调用 `multica issue status` 或以任何方式修改当前 Issue 状态。\n不要调用 `multica issue get` 或 `multica issue comment add`；daemon 会保存结构化结果。\n不得创建本地提交、推送分支、创建 PR 或合并。\n不得创建或上传截图、录屏或 trace；视觉验收使用文本或 JSON 形式的 DOM 与计算布局证据。\n\n【输出】\n修改文件、复用组件、新增组件、检查结果、视觉验收和阻塞项。",
 		contextValue.DesignTitle, contextValue.RevisionID, strings.Join(frameLines, "\n"), designImplementationRepositoryName(repository), designImplementationResultExample)
+	prompt += "\n【可选真实预览】\n只有已验证、当前真实运行的实现预览地址存在时，才在对应 preview_evidence 条目中提供可选的 url 字段。url 必须是包含主机名且不含用户名或密码的 HTTP(S) 地址；不得编造地址，不得为了提供预览而自动部署。没有可用地址时省略 url，并在 summary 中如实说明。path 继续只记录任务工作目录内的相对证据文件路径，不得将本地路径或输入设计稿地址当作实现预览。\n"
 	writeJSON(w, http.StatusOK, DesignImplementationPromptResponse{
 		Prompt:       prompt,
 		MCPArguments: mcpArguments,
@@ -262,10 +263,10 @@ func (h *Handler) designImplementationIdentityForTask(ctx context.Context, task 
 	comment, err := h.Queries.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{
 		ID: task.TriggerCommentID, WorkspaceID: workspaceUUID,
 	})
-	if err != nil || comment.IssueID != task.IssueID || !designimplementation.IsTask(comment.Content) {
+	if err != nil || comment.IssueID != task.IssueID || !designimplementation.IsTask(commentDesignDeliveryContent(comment)) {
 		return designimplementation.TaskIdentity{}, false
 	}
-	return designimplementation.ParseTaskIdentity(comment.Content)
+	return designimplementation.ParseTaskIdentity(commentDesignDeliveryContent(comment))
 }
 
 func designImplementationRequestMatchesTaskIdentity(designRef string, claim designAssetRefClaim, request DesignImplementationRequest, identity designimplementation.TaskIdentity) bool {

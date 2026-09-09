@@ -943,6 +943,14 @@ export const EMPTY_ATTACHMENT: Attachment = {
   created_at: "",
 };
 
+const CommentDesignDeliverySchema = z.object({
+  operation: z.enum(["design", "implement"]),
+  task_id: z.string().min(1),
+  document_id: z.string().optional(),
+  agent_id: z.string().min(1),
+  project_resource_id: z.string().min(1),
+}).loose().optional().catch(undefined);
+
 // All object schemas use `.loose()` so unknown server-side fields pass
 // through unchanged. zod 4's `.object()` defaults to STRIP, which would
 // silently drop new fields and surface as a "field neither showed up in
@@ -966,6 +974,7 @@ const TimelineEntrySchema = z.object({
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(AttachmentSchema).optional(),
   source_task_id: z.string().nullable().optional(),
+  design_delivery: CommentDesignDeliverySchema,
   coalesced_count: z.number().optional(),
 }).loose();
 
@@ -1072,6 +1081,7 @@ export const CommentSchema = z.object({
   source_task_id: z.string().nullable().optional(),
   // Set only on comments a quick action produced (MUL-5465). Server-only.
   quick_action_id: z.string().nullable().optional(),
+  design_delivery: CommentDesignDeliverySchema,
 }).loose();
 
 export const CommentsListSchema = z.array(CommentSchema);
@@ -1683,6 +1693,22 @@ export const BuildDesignImplementationPromptResponseSchema = z.object({
   mcp_arguments: z.record(z.string(), z.unknown()),
   context: DesignImplementationContextSchema,
 }).loose();
+
+export const DesignImplementationPreviewEvidenceListSchema = z.array(z.object({
+  frame_ref: z.string().catch(""),
+  status: z.string().catch(""),
+  path: z.string().catch(""),
+  summary: z.string().catch(""),
+  url: z.string().refine((value) => {
+    if (/\\|\s/.test(value)) return false;
+    try {
+      const url = new URL(value);
+      return (url.protocol === "https:" || url.protocol === "http:") && !!url.hostname && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  }).optional().catch(undefined),
+})).catch([]);
 
 
 export const DesignFileSchema = z.object({
@@ -2406,6 +2432,15 @@ function normalizeDesignDocumentStatus(value: unknown): DesignDocumentStatus {
       return "empty";
   }
 }
+
+export const DesignDocumentLivePreviewSchema = z.object({
+  task_id: z.string().min(1),
+  document_id: z.string().min(1),
+  content_digest: z.string().min(1),
+  files: z.record(z.string(), z.string()),
+  entry_path: z.string().min(1),
+  updated_at: z.string(),
+}).refine((preview) => !!preview.files[preview.entry_path]);
 
 /**
  * Design document created by the design centre home composer (DC-042).

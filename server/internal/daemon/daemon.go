@@ -8137,6 +8137,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			WorkDir: env.WorkDir, EnvRoot: env.RootDir,
 		}, nil
 	}
+	stopLivePreview := d.startDesignDocumentLivePreview(ctx, task, env.RootDir)
+	defer stopLivePreview()
 
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 

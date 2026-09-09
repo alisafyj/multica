@@ -552,6 +552,7 @@ type Comment struct {
 	ViaPluginID       pgtype.UUID        `json:"via_plugin_id"`
 	Revision          int64              `json:"revision"`
 	RecoverySettledAt pgtype.Timestamptz `json:"recovery_settled_at"`
+	DesignDelivery    []byte             `json:"design_delivery"`
 }
 
 type CommentReaction struct {
@@ -686,6 +687,15 @@ type DesignDocument struct {
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 	SavedAt               pgtype.Timestamptz `json:"saved_at"`
 	WorkspaceRepositoryID pgtype.UUID        `json:"workspace_repository_id"`
+}
+
+type DesignDocumentLivePreview struct {
+	TaskID        pgtype.UUID        `json:"task_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	DocumentID    pgtype.UUID        `json:"document_id"`
+	ContentDigest string             `json:"content_digest"`
+	Snapshot      []byte             `json:"snapshot"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DesignDocumentRevision struct {
