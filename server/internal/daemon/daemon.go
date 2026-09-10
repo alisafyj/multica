@@ -8744,6 +8744,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	for key, value := range repositorySetup.Env {
 		agentEnv[key] = value
 	}
+	if provider == "hermes" && env.HermesHome != "" {
+		if err := execenv.WriteHermesTaskEnvironment(env.HermesHome, agentEnv); err != nil {
+			return TaskResult{}, fmt.Errorf("write Hermes task environment: %w", err)
+		}
+	}
 	environmentDiagnostics := agentEnvironmentDiagnostics(provider, os.Environ(), agentCustomEnv)
 	if len(environmentDiagnostics) > 0 {
 		taskLog.Info("agent environment configuration sources", "configuration", environmentDiagnostics,

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -474,6 +475,51 @@ func writeDerivedHermesEnv(sharedHome, hermesHome string) error {
 	fmt.Fprintf(&buf, "HERMES_HOME='%s'\n", hermesHome)
 
 	return writeFileAtomic(dst, []byte(buf.String()), 0o600)
+}
+
+var hermesTaskEnvironmentKeys = []string{
+	"MULTICA_TOKEN",
+	"MULTICA_TASK_CONFIG_ROOT",
+	"MULTICA_WORKSPACES_ROOT",
+	"MULTICA_SERVER_URL",
+	"MULTICA_DAEMON_PORT",
+	"MULTICA_WORKSPACE_ID",
+	"MULTICA_AGENT_NAME",
+	"MULTICA_AGENT_ID",
+	"MULTICA_TASK_ID",
+	"MULTICA_TASK_SLOT",
+	"MULTICA_CLI",
+}
+
+// WriteHermesTaskEnvironment persists the daemon-attested Multica task context
+// into the task-local Hermes dotenv. Hermes terminal sandboxes do not reliably
+// inherit the ACP process environment, but they do inherit variables loaded by
+// Hermes from HERMES_HOME/.env. Keeping the values in this 0600 overlay makes
+// `multica` calls from tools use the task token/server instead of falling back
+// to the daemon user's profile. Only the fixed task-context allowlist is copied.
+func WriteHermesTaskEnvironment(hermesHome string, env map[string]string) error {
+	if strings.TrimSpace(hermesHome) == "" {
+		return nil
+	}
+	path := filepath.Join(hermesHome, ".env")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read Hermes overlay .env: %w", err)
+	}
+	for _, key := range hermesTaskEnvironmentKeys {
+		body = stripDotenvAssignment(body, key)
+	}
+	var buf strings.Builder
+	buf.Write(body)
+	if len(body) > 0 && body[len(body)-1] != '\n' {
+		buf.WriteByte('\n')
+	}
+	for _, key := range hermesTaskEnvironmentKeys {
+		if value, ok := env[key]; ok && value != "" {
+			fmt.Fprintf(&buf, "%s=%s\n", key, strconv.Quote(value))
+		}
+	}
+	return writeFileAtomic(path, []byte(buf.String()), 0o600)
 }
 
 // stripDotenvAssignment drops every line of a .env file that assigns key,
