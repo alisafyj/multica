@@ -165,6 +165,8 @@
     "section_skills": "スキル",
     "section_integrations": "連携",
     "prop_runtime": "ランタイム",
+    "prop_machine_name": "マシン名",
+    "prop_machine_ip": "IP アドレス",
     "prop_model": "モデル",
     "prop_thinking": "思考",
     "prop_speed": "速度",

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -194,6 +195,7 @@ type DaemonRegisterRequest struct {
 	// and tasks keep working without manual intervention.
 	LegacyDaemonIDs []string `json:"legacy_daemon_ids"`
 	DeviceName      string   `json:"device_name"`
+	DeviceIP        string   `json:"device_ip"`
 	CLIVersion      string   `json:"cli_version"` // multica CLI version
 	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
 	Runtimes        []struct {
@@ -404,6 +406,11 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	req.WorkspaceID = strings.TrimSpace(req.WorkspaceID)
 	req.DaemonID = strings.TrimSpace(req.DaemonID)
 	req.DeviceName = strings.TrimSpace(req.DeviceName)
+	if ip := net.ParseIP(strings.TrimSpace(req.DeviceIP)); ip != nil && !ip.IsLoopback() && !ip.IsUnspecified() {
+		req.DeviceIP = ip.String()
+	} else {
+		req.DeviceIP = ""
+	}
 
 	if req.DaemonID == "" {
 		writeError(w, http.StatusBadRequest, "daemon_id is required")
@@ -476,6 +483,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			"cli_version":  req.CLIVersion,
 			"capabilities": requestClientCapabilities(r),
 			"launched_by":  req.LaunchedBy,
+			"device_ip":    req.DeviceIP,
 		})
 
 		var registered db.AgentRuntime
@@ -682,6 +690,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 					"cli_version":                        req.CLIVersion,
 					"launched_by":                        req.LaunchedBy,
 					"capabilities":                       requestClientCapabilities(r),
+					"device_ip":                          req.DeviceIP,
 					"runtime_profile_registration_error": true,
 					"runtime_profile_failure_reason":     reason,
 					"command_name":                       resolvedCommandName,

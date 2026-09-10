@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import type {
   Agent,
   AgentRuntime,
@@ -50,7 +50,7 @@ const privateRuntime = {
   launch_header: "",
   status: "online",
   device_info: "Mac",
-  metadata: {},
+  metadata: { device_ip: "192.0.2.10" },
   owner_id: "user-2",
   visibility: "private",
   last_seen_at: null,
@@ -101,6 +101,13 @@ describe("AgentDetailInspector runtime access", () => {
     queryClient.clear();
   });
 
+
+  it("shows the selected local runtime's machine name and IP", () => {
+    renderInspector(privateRuntime.owner_id);
+
+    expect(screen.getByText("Mac")).toBeTruthy();
+    expect(screen.getByText("192.0.2.10")).toBeTruthy();
+  });
   it("does not discover models for another member's private runtime", async () => {
     renderInspector("admin-1");
 

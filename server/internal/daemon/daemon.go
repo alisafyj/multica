@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -391,6 +392,7 @@ type repoCacheBackend interface {
 type Daemon struct {
 	cfg        Config
 	client     *Client
+	deviceIP   string
 	repoCache  repoCacheBackend
 	skillCache *SkillBundleCache
 	logger     *slog.Logger
@@ -667,6 +669,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	d := &Daemon{
 		cfg:                       cfg,
 		client:                    client,
+		deviceIP:                  outboundIPForServer(cfg.ServerBaseURL),
 		repoCache:                 repocache.New(cacheRoot, logger),
 		skillCache:                NewSkillBundleCache(skillCacheRoot),
 		logger:                    logger,
@@ -713,6 +716,31 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	d.runUpdateFn = d.runUpdate
 	d.designPreviewBrowserPath = cfg.DesignPreviewBrowserPath
 	return d
+}
+
+func outboundIPForServer(serverBaseURL string) string {
+	u, err := url.Parse(serverBaseURL)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" || u.Scheme == "wss" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(u.Hostname(), port), time.Second)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || addr.IP == nil || addr.IP.IsLoopback() || addr.IP.IsUnspecified() {
+		return ""
+	}
+	return addr.IP.String()
 }
 
 // setAgentVersion records the detected CLI version for an agent provider so
@@ -2715,6 +2743,7 @@ func (d *Daemon) registerRuntimesForWorkspaceBatchLocked(ctx context.Context, wo
 		"daemon_id":         d.cfg.DaemonID,
 		"legacy_daemon_ids": d.cfg.LegacyDaemonIDs,
 		"device_name":       d.cfg.DeviceName,
+		"device_ip":         d.deviceIP,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
 		"runtimes":          runtimes,
@@ -2760,6 +2789,7 @@ func (d *Daemon) registerBuiltinRuntimesForWorkspaceLocked(ctx context.Context, 
 		"daemon_id":         d.cfg.DaemonID,
 		"legacy_daemon_ids": d.cfg.LegacyDaemonIDs,
 		"device_name":       d.cfg.DeviceName,
+		"device_ip":         d.deviceIP,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
 		"runtimes":          runtimes,

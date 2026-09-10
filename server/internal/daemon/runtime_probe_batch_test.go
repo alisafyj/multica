@@ -184,7 +184,8 @@ type registeredCall struct {
 	versions map[string]string
 	// names maps runtime type -> the display name that call reported, so a
 	// test can assert the name a user will see for a runtime identity.
-	names map[string]string
+	names    map[string]string
+	deviceIP string
 }
 
 func (fx *batchFixture) setWorkspaces(ws ...WorkspaceInfo) {
@@ -238,6 +239,18 @@ func (fx *batchFixture) registeredNameFor(workspaceID, runtimeType string) strin
 		}
 	}
 	return name
+}
+
+func (fx *batchFixture) registeredDeviceIPFor(workspaceID string) string {
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	var deviceIP string
+	for _, call := range fx.registered {
+		if call.workspaceID == workspaceID {
+			deviceIP = call.deviceIP
+		}
+	}
+	return deviceIP
 }
 
 // registrationFor returns the runtime types registered for a workspace, and
@@ -344,6 +357,7 @@ func newBatchFixture(t *testing.T) *batchFixture {
 		case r.URL.Path == "/api/daemon/register":
 			var body struct {
 				WorkspaceID string              `json:"workspace_id"`
+				DeviceIP    string              `json:"device_ip"`
 				Runtimes    []map[string]string `json:"runtimes"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -373,6 +387,7 @@ func newBatchFixture(t *testing.T) *batchFixture {
 			}
 			call := registeredCall{
 				workspaceID: body.WorkspaceID,
+				deviceIP:    body.DeviceIP,
 				versions:    map[string]string{},
 				names:       map[string]string{},
 			}
@@ -910,5 +925,20 @@ func TestRegisterRuntimesForWorkspaceBatch_DoesNotMutateSharedPayload(t *testing
 
 	if len(builtins) != 1 || builtins[0]["type"] != "claude" {
 		t.Fatalf("shared built-in payload was mutated: %v", builtins)
+	}
+}
+
+func TestRegisterRuntimesForWorkspaceBatchReportsDeviceIP(t *testing.T) {
+	fx := newBatchFixture(t)
+	fx.daemon.deviceIP = "192.0.2.10"
+	builtins := []map[string]string{
+		{"name": "Codex", "type": "codex", "version": "9.9.9", "status": "online"},
+	}
+
+	if _, _, err := fx.daemon.registerRuntimesForWorkspaceBatchLocked(context.Background(), "ws-1", builtins); err != nil {
+		t.Fatalf("register runtimes: %v", err)
+	}
+	if got := fx.registeredDeviceIPFor("ws-1"); got != "192.0.2.10" {
+		t.Fatalf("registered device_ip = %q, want 192.0.2.10", got)
 	}
 }

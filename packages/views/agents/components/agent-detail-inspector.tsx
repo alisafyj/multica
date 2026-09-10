@@ -122,6 +122,9 @@ export function AgentDetailInspector({
     runtime != null && isRuntimeUsableForUser(runtime, currentUserId);
   const canDiscoverRuntimeModels = isOnline && canReadRuntime;
   const nameInvalid = name.trim().length === 0;
+  const machineName = runtime?.device_info?.split(" · ")[0]?.trim() ?? "";
+  const rawDeviceIP = runtime?.metadata?.device_ip;
+  const deviceIP = typeof rawDeviceIP === "string" ? rawDeviceIP.trim() : "";
 
   // Same query the Thinking / Speed fields already use, so switching model
   // costs no extra request. `null` = not authoritative (offline runtime, still
@@ -267,6 +270,26 @@ export function AgentDetailInspector({
               }
             />
           </SettingsRow>
+          {runtime?.runtime_mode === "local" && machineName ? (
+            <SettingsRow
+              label={t(($) => $.inspector.prop_machine_name)}
+              size="none"
+            >
+              <span className="break-all text-body text-muted-foreground">
+                {machineName}
+              </span>
+            </SettingsRow>
+          ) : null}
+          {runtime?.runtime_mode === "local" && deviceIP ? (
+            <SettingsRow
+              label={t(($) => $.inspector.prop_machine_ip)}
+              size="none"
+            >
+              <span className="break-all font-mono text-body text-muted-foreground">
+                {deviceIP}
+              </span>
+            </SettingsRow>
+          ) : null}
           <SettingsRow
             label={t(($) => $.inspector.prop_model)}
             size="select-wide"
