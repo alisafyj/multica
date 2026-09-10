@@ -153,8 +153,16 @@ device hub). Its tools and rules:
 | `tap` `double_tap` `long_press` `swipe` `scroll` | gestures; `scroll` takes the direction you want to see |
 | `type_text` | after tapping the field; refused on password fields |
 | `press_key` `launch_app` `stop_app` `open_url` `wait` | the rest |
-| `a11y_tree` | UI tree; bounds are physical pixels — divide by `scale_factor` |
+| `a11y_tree` | optional cross-check when the frame does not settle a label or a control's exact bounds; bounds are physical pixels — divide by `scale_factor` |
 | `save_screenshot` | write the last frame to a file, then `multica test evidence add` |
+
+**You are the one who reads the screen.** The frame comes back as an image on
+the tool result: look at it and decide the next action from what you see.
+Nothing else recognises the UI for you — no model runs on the phone, in the
+hub, or behind the device tracks — so never make a case depend on an outside
+recogniser, and never block one because `a11y_tree` came back thin.
+`screenshot` takes `full_res: true` when the default 728-pixel-wide frame is
+too small to read.
 
 Every action returns `effect`: `changed` (read the new frame), `unchanged`
 (the action did nothing visible — try one other target; three unchanged
@@ -170,12 +178,12 @@ the store, or change system settings the case does not ask for.
 (driven by PulsePhone on that Mac). Same tools, with these differences:
 `launch_app` needs the bundle id in `package` (`stop_app` and `open_url` are
 unavailable); `press_key` has `home`, `recents` (app switcher), volume,
-`power` (lock) and `enter` but no `back` (use the app's own Back or Close
-control from `a11y_tree`, or `home` to leave an unknown state); `a11y_tree`
-is on-device element recognition of the visible viewport (`cls` `text` or
-`controlCandidate`, possibly `degraded`), not an accessibility tree; touch
-needs iOS 17+. Take a screenshot before the first tap: the frame fixes the
-coordinate space.
+`power` (lock) and `enter` but no `back` (tap the app's own Back or Close
+control on screen, or `home` to leave an unknown state); `a11y_tree` is
+on-device recognition of the visible viewport (`cls` `text` or
+`controlCandidate`, often `degraded`), not an accessibility tree, so on iOS
+the frame is the only reliable read of the screen; touch needs iOS 17+. Take
+a screenshot before the first tap: the frame fixes the coordinate space.
 
 ## 9. Test plans (informational)
 
