@@ -158,8 +158,11 @@ export function PrototypeCanvas({
       };
     };
 
+    // Event targets belong to the iframe realm, not the parent's Element constructor.
+    const isElement = (node: EventTarget | null): node is Element =>
+      node !== null && "nodeType" in node && node.nodeType === 1;
     const isCanvasUi = (node: EventTarget | null): node is Element =>
-      node instanceof Element && node.closest(`[${CANVAS_UI_ATTRIBUTE}]`) !== null;
+      isElement(node) && node.closest(`[${CANVAS_UI_ATTRIBUTE}]`) !== null;
 
     const hover = ensureNode("hover");
     const picked = ensureNode("picked");
@@ -182,7 +185,7 @@ export function PrototypeCanvas({
     // turns them back into navigation the workbench performs.
     listen("click", (event) => {
       const target = event.target;
-      if (!(target instanceof Element)) return;
+      if (!isElement(target)) return;
       const link = target.closest(`[${PAGE_LINK_ATTRIBUTE}]`);
       if (!link) return;
       event.preventDefault();
@@ -193,12 +196,12 @@ export function PrototypeCanvas({
     if (mode === "select") {
       listen("mousemove", (event) => {
         const target = event.target;
-        place(hover, target instanceof Element && !isCanvasUi(target) ? pageRect(target) : null);
+        place(hover, isElement(target) && !isCanvasUi(target) ? pageRect(target) : null);
       });
       listen("mouseleave", () => place(hover, null));
       listen("click", (event) => {
         const target = event.target;
-        if (!(target instanceof Element) || isCanvasUi(target)) return;
+        if (!isElement(target) || isCanvasUi(target)) return;
         event.preventDefault();
         event.stopPropagation();
         place(picked, pageRect(target));

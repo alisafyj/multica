@@ -86,11 +86,12 @@ describe("saved document viewer", () => {
     expect(frame).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/index.html");
     expect(frame).toHaveAttribute("sandbox", "allow-scripts");
     expect(frame).toHaveAttribute("referrerpolicy", "no-referrer");
-    expect(screen.queryByRole("option", { name: /draft-2/ })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByRole("combobox", { name: "页面" }), "prototype/orders.html");
+    expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "下一页" }));
     expect(screen.getByTitle("订单总览 · saved-1 订单")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/orders.html");
-    await user.selectOptions(screen.getByRole("combobox", { name: "页面" }), "prototype/extra.html");
+    await user.click(screen.getByRole("button", { name: "下一页" }));
     expect(container.querySelector("iframe")).toHaveAttribute("src", "https://api.test/preview/saved-1/prototype/extra.html");
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "返回页面概览" }));
     expect(screen.getByRole("region", { name: "页面概览" })).toBeInTheDocument();
     expect(container.querySelector("iframe")).toBeNull();

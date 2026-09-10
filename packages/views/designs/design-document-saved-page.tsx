@@ -2,18 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@multica/core/api";
 import { designDocumentDetailOptions, designDocumentRevisionOptions } from "@multica/core/designs/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { useNavigation } from "../navigation";
 import { previewEntries } from "./design-document-preview";
 import { DesignDocumentThumbnail } from "./design-document-thumbnail";
+import { DesignDocumentInspect } from "./design-document-inspect";
 
 export function DesignDocumentSavedPage({ documentId }: { documentId: string }) {
   const wsId = useWorkspaceId();
@@ -30,9 +29,9 @@ export function DesignDocumentSavedPage({ documentId }: { documentId: string }) 
   const page = selection?.revisionId === savedRevisionId
     ? entries.find((entry) => entry.entry === selection.entry)
     : undefined;
-  const previewUrl = revision?.resource_base_path && page
-    ? api.getDesignDocumentPreviewFileURL(revision.resource_base_path, page.entry)
-    : "";
+  const pageIndex = entries.findIndex((entry) => entry.entry === page?.entry);
+  const previous = entries[pageIndex - 1];
+  const next = entries[pageIndex + 1];
   const title = document?.title || "设计稿";
 
   return (
@@ -60,20 +59,21 @@ export function DesignDocumentSavedPage({ documentId }: { documentId: string }) 
         </div>
       ) : revisionQuery.isLoading ? (
         <div role="status" aria-label="加载已保存版本" className="flex min-h-0 flex-1 p-4"><Skeleton className="min-h-64 w-full" /></div>
+      ) : page && revision ? (
+        <DesignDocumentInspect
+          revision={revision}
+          entryPath={page.entry}
+          title={title + " · " + page.title}
+          onOverview={() => setSelection(null)}
+          onPrevious={previous ? () => setSelection({ revisionId: savedRevisionId, entry: previous.entry }) : undefined}
+          onNext={next ? () => setSelection({ revisionId: savedRevisionId, entry: next.entry }) : undefined}
+        />
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-3 border-b bg-background px-4 py-3">
             <Badge variant="secondary">已保存{revision ? ` · v${revision.revision_number}` : ""}</Badge>
             <span className="text-caption text-muted-foreground">只读查看</span>
             <span className="text-caption text-muted-foreground">{entries.length} 个页面</span>
-            {page ? (
-              <>
-              <Button size="sm" variant="outline" onClick={() => setSelection(null)}>返回页面概览</Button>
-              <NativeSelect aria-label="页面" value={page.entry} onChange={(event) => setSelection({ revisionId: savedRevisionId, entry: event.target.value })}>
-                {entries.map((entry) => <NativeSelectOption key={entry.entry} value={entry.entry}>{entry.title}</NativeSelectOption>)}
-              </NativeSelect>
-              </>
-            ) : null}
           </div>
           <div className="flex min-h-0 flex-1 justify-center overflow-auto bg-muted/30 p-4">
             {!page && revision && entries.length > 0 ? (
@@ -93,16 +93,6 @@ export function DesignDocumentSavedPage({ documentId }: { documentId: string }) 
                   </button>
                 ))}
               </section>
-            ) : previewUrl ? (
-              <iframe
-                key={savedRevisionId + ":" + page?.entry}
-                title={title + " · " + page?.title}
-                src={previewUrl}
-                sandbox="allow-scripts"
-                referrerPolicy="no-referrer"
-                className="min-h-[480px] w-full rounded-md border bg-background shadow-sm"
-                style={{ maxWidth: document.platform === "mobile" ? 390 : undefined }}
-              />
             ) : (
               <p role="status" className="self-center text-muted-foreground">已保存版本没有可预览的页面。</p>
             )}
