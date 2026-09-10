@@ -173,6 +173,8 @@
     "section_skills": "Skills",
     "section_integrations": "集成",
     "prop_runtime": "运行时",
+    "prop_machine_name": "机器名",
+    "prop_machine_ip": "IP 地址",
     "prop_model": "模型",
     "prop_thinking": "思考",
     "prop_speed": "速度",

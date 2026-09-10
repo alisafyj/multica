@@ -757,6 +757,7 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 		"workspace_id": testWorkspaceID,
 		"daemon_id":    "test-daemon-mdt",
 		"device_name":  "test-device",
+		"device_ip":    "192.0.2.10",
 		"runtimes": []map[string]any{
 			{"name": "test-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
 		},
@@ -772,9 +773,16 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	if _, ok := resp["repos_version"].(string); !ok {
 		t.Fatalf("DaemonRegister: expected repos_version in response, got %v", resp)
 	}
+	rt := runtimes[0].(map[string]any)
+	metadata, ok := rt["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("DaemonRegister: expected runtime metadata object, got %v", rt["metadata"])
+	}
+	if got := metadata["device_ip"]; got != "192.0.2.10" {
+		t.Fatalf("DaemonRegister: metadata.device_ip = %v, want 192.0.2.10", got)
+	}
 
 	// Clean up: deregister the runtime.
-	rt := runtimes[0].(map[string]any)
 	runtimeID := rt["id"].(string)
 	testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }

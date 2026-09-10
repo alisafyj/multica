@@ -182,6 +182,8 @@
     "section_skills": "Skills",
     "section_integrations": "Integrations",
     "prop_runtime": "Runtime",
+    "prop_machine_name": "Machine name",
+    "prop_machine_ip": "IP address",
     "prop_model": "Model",
     "prop_thinking": "Thinking",
     "prop_speed": "Speed",
