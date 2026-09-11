@@ -57,3 +57,29 @@ func TestDesignImplementationRepositoryDirRejectsUnknownResource(t *testing.T) {
 		t.Fatal("unknown selected repository was accepted")
 	}
 }
+
+func TestDesignImplementationReceiptMatchesTaskUsesSelectedFrameOrder(t *testing.T) {
+	t.Parallel()
+
+	task := Task{ProjectID: "project-1", IssueID: "issue-1"}
+	identity := designimplementation.TaskIdentity{
+		DesignRef: "design-1", RevisionID: "revision-1", ContentDigest: "sha256:digest",
+		FrameRefs: []string{"frame-1", "frame-2"}, ProjectResourceID: "repository-1",
+	}
+	receipt := designimplementation.FrozenIdentity{
+		DesignRef: "design-1", RevisionID: "revision-1", ContentDigest: "sha256:digest",
+		FrameRefs: []string{"frame-1", "frame-2"}, ProjectID: "project-1", IssueID: "issue-1",
+		ProjectResourceID: "repository-1",
+	}
+	if !designImplementationReceiptMatchesTask(task, receipt, identity) {
+		t.Fatal("receipt with the selected frame order was rejected")
+	}
+	receipt.FrameRefs = []string{"frame-2", "frame-1"}
+	if designImplementationReceiptMatchesTask(task, receipt, identity) {
+		t.Fatal("receipt with reordered frame refs was accepted")
+	}
+	receipt.FrameRefs = []string{"frame-1"}
+	if designImplementationReceiptMatchesTask(task, receipt, identity) {
+		t.Fatal("receipt with an incomplete frame set was accepted")
+	}
+}

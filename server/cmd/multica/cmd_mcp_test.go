@@ -227,7 +227,7 @@ func TestDesignMCPGetImplementationContextUsesTaskBoundMarkerIdentity(t *testing
 		writeMCPTestJSON(w, map[string]any{
 			"schema_version": "multica.design-implementation-context/v1", "implementation_ref": "implementation_v1_example",
 			"design_ref": "design_v1_authoritative", "revision_id": "revision-1", "content_digest": "sha256:" + strings.Repeat("a", 64),
-			"frame_refs": []string{"frame_v1_authoritative"}, "project_id": "project-1", "issue_id": "issue-1",
+			"frame_refs": []string{"frame_v1_authoritative", "frame_v1_detail"}, "project_id": "project-1", "issue_id": "issue-1",
 			"project_resource_id": "repository-1", "design_title": "Customers",
 			"allowed_write_paths": []string{"."}, "verification_requirements": []string{"pnpm test"},
 		})
@@ -243,7 +243,7 @@ func TestDesignMCPGetImplementationContextUsesTaskBoundMarkerIdentity(t *testing
 		"managed_by": execenv.TaskContextMarkerManagedBy, "task_id": "task-1", "issue_id": "issue-1",
 		"design_implementation": designimplementation.TaskIdentity{
 			AssetID: "asset-1", DesignRef: "design_v1_authoritative", RevisionID: "revision-1",
-			ContentDigest: "sha256:digest", FrameRef: "frame_v1_authoritative", ProjectResourceID: "repository-1",
+			ContentDigest: "sha256:digest", FrameRefs: []string{"frame_v1_authoritative", "frame_v1_detail"}, ProjectResourceID: "repository-1",
 		},
 	}
 	raw, err := json.Marshal(marker)
@@ -261,7 +261,8 @@ func TestDesignMCPGetImplementationContextUsesTaskBoundMarkerIdentity(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody["revision_id"] != "revision-1" || gotBody["issue_id"] != "issue-1" || gotBody["project_resource_id"] != "repository-1" {
+	if gotBody["revision_id"] != "revision-1" || gotBody["issue_id"] != "issue-1" || gotBody["project_resource_id"] != "repository-1" ||
+		!reflect.DeepEqual(gotBody["frame_refs"], []any{"frame_v1_authoritative", "frame_v1_detail"}) {
 		t.Fatalf("API body = %+v", gotBody)
 	}
 }

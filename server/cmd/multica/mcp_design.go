@@ -673,15 +673,30 @@ func (a *designMCPAdapter) taskBoundImplementationArguments() (map[string]any, b
 	if identity == nil {
 		return nil, false, nil
 	}
+	frameRefs := identity.SelectedFrameRefs()
 	if marker.TaskID == "" || marker.TaskID != os.Getenv("MULTICA_TASK_ID") || marker.IssueID == "" ||
-		identity.DesignRef == "" || identity.RevisionID == "" || identity.FrameRef == "" || identity.ProjectResourceID == "" {
+		identity.DesignRef == "" || identity.RevisionID == "" || !uniqueStringSlice(frameRefs) || identity.ProjectResourceID == "" {
 		return nil, false, errors.New("task-bound design implementation identity is invalid")
 	}
 	return map[string]any{
 		"designRef": identity.DesignRef, "revisionId": identity.RevisionID,
-		"frameRefs": []string{identity.FrameRef}, "targetRepositoryId": identity.ProjectResourceID,
+		"frameRefs": frameRefs, "targetRepositoryId": identity.ProjectResourceID,
 		"issueId": marker.IssueID,
 	}, true, nil
+}
+
+func uniqueStringSlice(values []string) bool {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			return false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return len(values) > 0
 }
 
 func equalStrings(left, right []string) bool {

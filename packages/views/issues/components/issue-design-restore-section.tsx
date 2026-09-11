@@ -10,7 +10,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import type { AgentTask, CommentDesignRequest, DesignFile, Issue } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { useT } from "../../i18n";
 
 export interface DesignImplementationTaskIdentity {
@@ -18,7 +18,7 @@ export interface DesignImplementationTaskIdentity {
   designRef: string;
   revisionId: string;
   contentDigest: string;
-  frameRef: string;
+  frameRefs: string[];
   selectionKey?: string;
   projectResourceId: string;
 }
@@ -118,27 +118,27 @@ export function IssueDesignRestoreSection({ issue, request, onChange, onPrepared
   const selectedAsset = assets.find((asset) => asset.designRef === request.design_ref);
   const framesQuery = useQuery(designAssetFramesOptions(wsId, selectedAsset?.designRef ?? ""));
   const frames = framesQuery.data?.frames ?? [];
-  const frameRef = request.frame_refs?.[0] ?? "";
-  const selectedFrame = frames.find((frame) => frame.frame_ref === frameRef);
+  const frameRefs = request.frame_refs ?? [];
+  const selectedFrames = frames.filter((frame) => frameRefs.includes(frame.frame_ref));
   const prepare = useMutation({
     mutationFn: async () => {
-      if (!selectedAsset || !selectedFrame || !request.project_resource_id) throw new Error(t(($) => $.design_delivery.select_restore_scope));
+      if (!selectedAsset || !selectedFrames.length || !request.project_resource_id) throw new Error(t(($) => $.design_delivery.select_restore_scope));
       const response = await api.buildDesignImplementationPrompt(selectedAsset.designRef, {
         revision_id: selectedAsset.revisionId,
-        frame_refs: [selectedFrame.frame_ref],
+        frame_refs: selectedFrames.map((frame) => frame.frame_ref),
         project_resource_id: request.project_resource_id,
         issue_id: issue.id,
       });
-      return { response, frame: selectedFrame, asset: selectedAsset, sourceRequest: request };
+      return { response, frames: selectedFrames, asset: selectedAsset, sourceRequest: request };
     },
-    onSuccess: ({ response, frame, asset, sourceRequest }) => {
+    onSuccess: ({ response, frames: preparedFrames, asset, sourceRequest }) => {
       const marker = designImplementationTaskMarker({
         assetId: asset.id,
         designRef: response.context.design_ref,
         revisionId: response.context.revision_id,
         contentDigest: response.context.content_digest,
-        frameRef: frame.frame_ref,
-        selectionKey: frame.selection_key,
+        frameRefs: response.context.frame_refs,
+        selectionKey: preparedFrames.map((frame) => frame.selection_key).join(","),
         projectResourceId: sourceRequest.project_resource_id,
       });
       onPrepared([DESIGN_IMPLEMENTATION_TRIGGER, marker, "", response.prompt].join("\n"), {
@@ -146,7 +146,7 @@ export function IssueDesignRestoreSection({ issue, request, onChange, onPrepared
         request_id: crypto.randomUUID(),
         design_ref: response.context.design_ref,
         revision_id: response.context.revision_id,
-        frame_refs: [frame.frame_ref],
+        frame_refs: response.context.frame_refs,
       }, sourceRequest.request_id);
     },
   });
@@ -169,19 +169,30 @@ export function IssueDesignRestoreSection({ issue, request, onChange, onPrepared
         {!assets.length ? <p className="p-2 text-caption text-muted-foreground">{filesQuery.isLoading || documentsQuery.isLoading ? t(($) => $.design_delivery.loading) : t(($) => $.design_delivery.no_assets)}</p> : null}
       </div>
       {selectedAsset ? (
-        <label className="block space-y-1 text-caption">
-          <span>{t(($) => $.design_delivery.frame)}</span>
-          <NativeSelect aria-label={t(($) => $.design_delivery.frame)} value={frameRef}
-            onChange={(event) => onChange({ ...request, request_id: crypto.randomUUID(), revision_id: undefined, frame_refs: event.target.value ? [event.target.value] : [] })}>
-            <NativeSelectOption value="">{t(($) => $.design_delivery.select_frame)}</NativeSelectOption>
-            {frames.map((frame) => <NativeSelectOption key={frame.frame_ref} value={frame.frame_ref}>{frame.title}</NativeSelectOption>)}
-          </NativeSelect>
+        <fieldset className="space-y-1 text-caption">
+          <legend>{t(($) => $.design_delivery.frame)}</legend>
+          <div role="group" aria-label={t(($) => $.design_delivery.frame)} className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-1">
+            {frames.map((frame) => {
+              const checked = frameRefs.includes(frame.frame_ref);
+              return (
+                <label key={frame.frame_ref} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-muted/60">
+                  <Checkbox checked={checked} onCheckedChange={(value) => {
+                    const next = selectedAsset.kind === "figma_file"
+                      ? (value === true ? [frame.frame_ref] : [])
+                      : (value === true ? [...frameRefs, frame.frame_ref] : frameRefs.filter((ref) => ref !== frame.frame_ref));
+                    onChange({ ...request, request_id: crypto.randomUUID(), revision_id: undefined, frame_refs: next });
+                  }} />
+                  <span>{frame.title}</span>
+                </label>
+              );
+            })}
+          </div>
           {framesQuery.isLoading ? <span>{t(($) => $.design_delivery.loading)}</span> : null}
           {framesQuery.isError ? <span role="alert" className="text-destructive">{t(($) => $.design_delivery.assets_failed)}</span> : null}
           <span className="block break-all font-mono text-micro text-muted-foreground">{selectedAsset.designRef} · {selectedAsset.revisionId}</span>
-        </label>
+        </fieldset>
       ) : null}
-      <Button type="button" size="sm" variant="outline" disabled={!selectedFrame || !request.project_resource_id || !request.agent_id || prepare.isPending} onClick={() => prepare.mutate()}>
+      <Button type="button" size="sm" variant="outline" disabled={!selectedFrames.length || !request.project_resource_id || !request.agent_id || prepare.isPending} onClick={() => prepare.mutate()}>
         <WandSparkles className="size-3.5" />{prepare.isPending ? t(($) => $.design_delivery.preparing) : t(($) => $.design_delivery.prepare)}
       </Button>
       {prepare.isError ? <p role="alert" className="text-caption text-destructive">{prepare.error.message || t(($) => $.design_delivery.prepare_failed)}</p> : null}

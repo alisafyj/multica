@@ -201,6 +201,11 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		writeDesignAssetResolveError(w, err)
 		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
 	}
+	packageDescriptor := designImplementationPackageDescriptor(claim, sourceDocumentID, request.FrameRefs, frames)
+	if packageDescriptor == nil {
+		writeProjectDesignSystemError(w, http.StatusConflict, "implementation_scope_invalid", "selected pages cannot be materialized as one implementation package")
+		return DesignImplementationContextResponse{}, DesignImplementationRequest{}, db.ProjectResource{}, false
+	}
 	taskID := ""
 	if taskOK {
 		taskID = uuidToString(task.ID)
@@ -220,7 +225,7 @@ func (h *Handler) resolveDesignImplementationRequest(w http.ResponseWriter, r *h
 		RevisionID: claim.RevisionID, ContentDigest: claim.ContentDigest, FrameRefs: append([]string(nil), request.FrameRefs...),
 		TaskID:    taskID,
 		ProjectID: claim.ProjectID, IssueID: request.IssueID, ProjectResourceID: request.ProjectResourceID,
-		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: designImplementationPackageDescriptor(claim, sourceDocumentID, request.FrameRefs, frames), AllowedWritePaths: []string{"."},
+		DesignTitle: title, DesignSystemDigest: designSystemDigest, Package: packageDescriptor, AllowedWritePaths: []string{"."},
 		VerificationRequirements: []string{"repository typecheck/tests/build as applicable", "real rendered preview for changed UI"},
 		SourceInstructions:       designImplementationSourceInstructions(claim.Kind),
 		VerificationTargets:      designImplementationVerificationTargets(claim.Kind),
@@ -272,8 +277,20 @@ func (h *Handler) designImplementationIdentityForTask(ctx context.Context, task 
 func designImplementationRequestMatchesTaskIdentity(designRef string, claim designAssetRefClaim, request DesignImplementationRequest, identity designimplementation.TaskIdentity) bool {
 	return identity.AssetID == claim.AssetID && identity.DesignRef == designRef &&
 		identity.RevisionID == claim.RevisionID && identity.ContentDigest == claim.ContentDigest &&
-		identity.ProjectResourceID == request.ProjectResourceID && len(request.FrameRefs) == 1 &&
-		identity.FrameRef == request.FrameRefs[0]
+		identity.ProjectResourceID == request.ProjectResourceID &&
+		sameStringSlices(request.FrameRefs, identity.SelectedFrameRefs())
+}
+
+func sameStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func designImplementationPackageDescriptor(claim designAssetRefClaim, documentID string, frameRefs []string, availableFrames []DesignAssetFrameResponse) *DesignImplementationPackageDescriptor {
@@ -345,8 +362,8 @@ func (h *Handler) resolveDesignImplementationFrames(r *http.Request, claim desig
 }
 
 func validateDesignImplementationFrameRefs(design designAssetRefClaim, refs []string, available []DesignAssetFrameResponse) error {
-	if len(refs) != 1 {
-		return designAssetResolveFailure(http.StatusBadRequest, "frame_ref_invalid", "select exactly one frame")
+	if len(refs) == 0 || (design.Kind == "figma" && len(refs) != 1) {
+		return designAssetResolveFailure(http.StatusBadRequest, "frame_ref_invalid", "select pages from one saved design; Figma accepts one exact frame or group")
 	}
 	availableSelections := make(map[string]struct{}, len(available))
 	for _, frame := range available {

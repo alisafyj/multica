@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,13 +27,17 @@ func collectDesignImplementationReceipt(task Task, workDir string, now time.Time
 	if err != nil {
 		return nil, err
 	}
-	if receipt.Identity.ProjectID != task.ProjectID || receipt.Identity.IssueID != task.IssueID ||
-		receipt.Identity.ProjectResourceID != identity.ProjectResourceID || receipt.Identity.DesignRef != identity.DesignRef ||
-		receipt.Identity.RevisionID != identity.RevisionID || receipt.Identity.ContentDigest != identity.ContentDigest ||
-		len(receipt.Identity.FrameRefs) != 1 || receipt.Identity.FrameRefs[0] != identity.FrameRef {
+	if !designImplementationReceiptMatchesTask(task, receipt.Identity, identity) {
 		return nil, errors.New("design implementation receipt does not match the dispatched task identity")
 	}
 	return receipt, nil
+}
+
+func designImplementationReceiptMatchesTask(task Task, receipt designimplementation.FrozenIdentity, identity designimplementation.TaskIdentity) bool {
+	return receipt.ProjectID == task.ProjectID && receipt.IssueID == task.IssueID &&
+		receipt.ProjectResourceID == identity.ProjectResourceID && receipt.DesignRef == identity.DesignRef &&
+		receipt.RevisionID == identity.RevisionID && receipt.ContentDigest == identity.ContentDigest &&
+		slices.Equal(receipt.FrameRefs, identity.SelectedFrameRefs())
 }
 
 func designImplementationRepositoryDir(task Task, workDir string, identity designimplementation.TaskIdentity) (string, error) {

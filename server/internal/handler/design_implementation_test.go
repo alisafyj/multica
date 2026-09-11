@@ -392,3 +392,45 @@ func sameDesignImplementationContext(t *testing.T, left, right DesignImplementat
 	right.ImplementationRef = ""
 	return reflect.DeepEqual(left, right)
 }
+
+func TestDesignImplementationRequestMatchesEverySelectedPage(t *testing.T) {
+	t.Parallel()
+	claim := designAssetRefClaim{AssetID: "asset-1", RevisionID: "revision-1", ContentDigest: "sha256:digest"}
+	request := DesignImplementationRequest{RevisionID: claim.RevisionID, FrameRefs: []string{"page-1", "page-2"}, ProjectResourceID: "repository-1"}
+	identity := designimplementation.TaskIdentity{
+		AssetID: claim.AssetID, DesignRef: "design-1", RevisionID: claim.RevisionID,
+		ContentDigest: claim.ContentDigest, FrameRefs: []string{"page-1", "page-2"}, ProjectResourceID: request.ProjectResourceID,
+	}
+	if !designImplementationRequestMatchesTaskIdentity(identity.DesignRef, claim, request, identity) {
+		t.Fatal("matching multi-page identity was rejected")
+	}
+	request.FrameRefs = []string{"page-1"}
+	if designImplementationRequestMatchesTaskIdentity(identity.DesignRef, claim, request, identity) {
+		t.Fatal("partial page selection matched the frozen task identity")
+	}
+}
+
+func TestValidateDesignImplementationFrameRefsAllowsDocumentPagesButNotLooseFigmaFrames(t *testing.T) {
+	t.Parallel()
+	design := designAssetRefClaim{
+		Kind: "multica", WorkspaceID: testWorkspaceID, ProjectID: "11111111-1111-4111-8111-111111111111", UserID: testUserID,
+		AssetID: "22222222-2222-4222-8222-222222222222", RevisionID: "33333333-3333-4333-8333-333333333333",
+		ContentDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	refs := make([]string, 2)
+	for index, pageID := range []string{"page-1", "page-2"} {
+		var err error
+		refs[index], err = issueDesignAssetFrameRef(design, "page", pageID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	available := []DesignAssetFrameResponse{{FrameRef: refs[0]}, {FrameRef: refs[1]}}
+	if err := validateDesignImplementationFrameRefs(design, refs, available); err != nil {
+		t.Fatalf("saved document pages were rejected: %v", err)
+	}
+	design.Kind = "figma"
+	if err := validateDesignImplementationFrameRefs(design, refs, available); err == nil {
+		t.Fatal("loose multi-frame Figma selection was accepted without a frozen group")
+	}
+}

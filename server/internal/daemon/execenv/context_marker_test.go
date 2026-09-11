@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestWriteTaskContextMarkerIncludesBoundDesignImplementationIdentity(t *test
 	root := t.TempDir()
 	identity := designimplementation.TaskIdentity{
 		AssetID: "asset-1", DesignRef: "design_v1_authoritative", RevisionID: "revision-1",
-		ContentDigest: "sha256:digest", FrameRef: "frame_v1_authoritative", ProjectResourceID: "repository-1",
+		ContentDigest: "sha256:digest", FrameRefs: []string{"frame_v1_authoritative", "frame_v1_detail"}, ProjectResourceID: "repository-1",
 	}
 	if err := writeTaskContextMarker(root, TaskContextForEnv{
 		TaskID: "task-1", AgentID: "agent-1", IssueID: "issue-1", DesignImplementation: &identity,
@@ -33,7 +34,7 @@ func TestWriteTaskContextMarkerIncludesBoundDesignImplementationIdentity(t *test
 	if err := json.Unmarshal(raw, &marker); err != nil {
 		t.Fatal(err)
 	}
-	if marker.TaskID != "task-1" || marker.DesignImplementation == nil || *marker.DesignImplementation != identity {
+	if marker.TaskID != "task-1" || marker.DesignImplementation == nil || !reflect.DeepEqual(*marker.DesignImplementation, identity) {
 		t.Fatalf("task marker identity = %+v", marker)
 	}
 }
