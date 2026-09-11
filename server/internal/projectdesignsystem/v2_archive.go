@@ -295,7 +295,12 @@ func validateV2DirectoryPath(name string) error {
 }
 
 func validateV2Binding(binding PackageBinding) error {
-	values := []string{binding.WorkspaceID, binding.ProjectID, binding.DesignSystemID, binding.TaskID, binding.AgentID}
+	values := []string{binding.WorkspaceID, binding.DesignSystemID, binding.TaskID, binding.AgentID}
+	// Workspace-owned and repository-owned systems have no project. A supplied
+	// project remains validated and must still match the archive binding exactly.
+	if binding.ProjectID != "" {
+		values = append(values, binding.ProjectID)
+	}
 	for _, value := range values {
 		if value == "" || value != strings.TrimSpace(value) || strings.IndexFunc(value, func(r rune) bool { return r < 0x20 }) >= 0 {
 			return errors.New("V2 package binding contains an invalid identity")
