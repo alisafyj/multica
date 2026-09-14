@@ -32,7 +32,8 @@
   },
   "execution_mode": {
     "create_issue": "태스크 생성",
-    "run_only": "실행만"
+    "run_only": "실행만",
+    "test_run": "테스트 실행"
   },
   "relative_date": {
     "today": "오늘",
@@ -111,7 +112,9 @@
       "cancel": "취소",
       "confirm": "삭제",
       "deleting": "삭제하는 중..."
-    }
+    },
+    "field_test_plan": "테스트 계획",
+    "test_plan_unavailable": "계획을 불러올 수 없습니다"
   },
   "access": {
     "title": "접근 권한 관리",
@@ -146,7 +149,8 @@
     "skipped_group": {
       "label": "건너뜀",
       "summary": "건너뛴 실행 {{count}}개"
-    }
+    },
+    "test_run_linked": "테스트 라운드"
   },
   "webhook_payload": {
     "label": "Webhook 이벤트:",
@@ -327,8 +331,18 @@
       "run_only": {
         "label": "실행만",
         "description": "태스크를 만들지 않고 조용히 실행합니다"
+      },
+      "test_run": {
+        "label": "테스트 실행",
+        "description": "실행할 때마다 테스트 계획으로 라운드를 만들어 배정합니다"
       }
-    }
+    },
+    "section_test_plan": "테스트 계획",
+    "test_plan_placeholder": "테스트 계획 선택",
+    "no_test_plans": "아직 테스트 계획이 없습니다 — '테스트'에서 만드세요",
+    "test_plan_required": "실행이 라운드를 만들 테스트 계획을 고르세요",
+    "test_run_parallelism": "동시 케이스 수",
+    "test_run_parallelism_hint": "한 번에 배정하는 케이스 수. 비우면 전부"
   },
   "schedule_editor": {
     "time_label": "시간",

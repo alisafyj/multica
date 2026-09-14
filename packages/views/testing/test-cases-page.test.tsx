@@ -84,6 +84,8 @@ vi.mock("@multica/core/testing", () => {
     useDeleteTestCase: () => ({ mutateAsync: mocks.deleteCase, isPending: false }),
     useCreateTestPlan: () => ({ mutateAsync: mocks.createPlan, isPending: false }),
     useAddTestPlanCases: () => ({ mutateAsync: mocks.addPlanCases, isPending: false }),
+    useCreateTestRun: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useRecommendTestCases: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useTestCaseViewStore: store,
   };
 });

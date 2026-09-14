@@ -67,6 +67,7 @@ export type {
   RuntimeModel,
   RuntimeModelServiceTier,
   RuntimeModelThinking,
+  RuntimeUnavailableModel,
   RuntimeModelThinkingLevel,
   RuntimeModelListRequest,
   RuntimeModelListStatus,
@@ -178,6 +179,9 @@ export type {
   ProjectResource,
   ProjectResourceType,
   ProjectResourceRef,
+  ProjectConfigurationPolicy,
+  RepositorySetup,
+  RepositorySetupStep,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
   DocumentResourceRef,
@@ -206,6 +210,10 @@ export type {
   UpdateTestCaseRequest,
   ListTestCasesResponse,
   ListTestCaseModulesResponse,
+  RecommendTestCasesRequest,
+  TestCaseRecommendationMatch,
+  TestCaseRecommendation,
+  RecommendTestCasesResponse,
   ListTestCaseRevisionsResponse,
   // Phase 2 — test generation
   TestGenerationJobStatus,
@@ -259,6 +267,16 @@ export type {
   LinkTestCaseIssuesRequest,
   DispatchTestRunResponse,
   DispatchTestRunBlockedResponse,
+  TestCapabilityRequirement,
+  RuntimeCapabilityScanResponse,
+  RuntimeDeviceHub,
+  IssueTestSummary,
+  IssueTestRunSummary,
+  IssueTestDefect,
+  IssueFoundBy,
+  TestPlanStats,
+  TestPlanRunStat,
+  TestPlanModuleStat,
 } from "./testing";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type * from "./product-map";
@@ -408,3 +426,5 @@ export type {
 } from "./billing";
 export type * from "./design";
 export type * from "./pmo";
+export type * from "./task-run-evidence";
+export type * from "./pending-input";

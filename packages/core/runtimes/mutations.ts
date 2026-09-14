@@ -58,6 +58,8 @@ export function useUpdateRuntime(wsId: string) {
         // Empty string clears the custom name; omit to leave unchanged.
         custom_name?: string;
         apply_to_machine?: boolean;
+        /** M4: designate the machine as a test host for device rounds. */
+        test_host_enabled?: boolean;
       };
     }) => api.updateRuntime(runtimeId, patch),
     onSettled: () => {

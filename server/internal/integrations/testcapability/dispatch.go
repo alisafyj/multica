@@ -6,7 +6,9 @@
 //
 // Feature flag: "test_capability_mcp" (see FeatureFlagKey). Intentionally
 // distinct from "composio_mcp_apps" so each provider's rollout can be
-// controlled independently.
+// controlled independently. The flag defaults to ON: without the overlay a
+// run bound to a browser capability launches an agent that has no browser,
+// and the flag has no other consumer that could justify an opt-in.
 //
 // Context protocol: the test_run dispatch handler (handler/test_run.go) calls
 // WithResolvedCapabilities before enqueueing the agent task. BuildTaskOverlay
@@ -16,9 +18,12 @@
 package testcapability
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -37,9 +42,14 @@ const (
 	// MCPBrowserServerName is the stable key under mcpServers for the
 	// browser-automation MCP server (playwright or chrome-devtools-mcp).
 	MCPBrowserServerName = "multica-browser"
-	// MCPDeviceServerName is reserved for Phase 5 android_device / ios_device /
-	// computer_use support. No entry is emitted for this name in v1.
-	MCPDeviceServerName = "multica-device" //nolint:deadcode,unused // Phase 5 seam
+	// MCPDeviceServerName is the stable key for the phone-control MCP: the
+	// multica-device-mcp stdio connector, which leases a phone from the device
+	// hub running on the agent's own machine (TS-020, TS-023).
+	MCPDeviceServerName = "multica-device"
+
+	// defaultDeviceHubURL is where the connector finds the hub when the daemon
+	// did not report a connector path (loopback on the test host).
+	defaultDeviceHubURL = "http://127.0.0.1:18801"
 )
 
 // capabilityMCPServer is the wire shape of one stdio MCP server entry in the
@@ -67,6 +77,16 @@ type TestRunCapabilityEntry struct {
 	// Target is the capability's target JSONB, already decoded to a map so
 	// BuildTaskOverlay can read provider/browser/etc. without re-parsing.
 	Target map[string]json.RawMessage
+	// Match is the case's constraint on the kind (`{"os_version": ">=13"}`);
+	// the device connector leases any hub phone that satisfies it.
+	Match map[string]string
+	// Tags ride on the lease (`--tag k=v`): the daemon finds the lease of a
+	// running case by run_case_id to relay its live frame, and the hub audit
+	// records them next to every action.
+	Tags map[string]string
+	// Label names the lease on the phone owner's prompt and in the hub audit
+	// log: the run case key (TC-42) or id.
+	Label string
 }
 
 // ctxKey is the private context key type for testcapability entries.
@@ -88,9 +108,10 @@ func resolvedCapabilitiesFromContext(ctx context.Context) ([]TestRunCapabilityEn
 }
 
 // IsEnabled reports whether the testcapability MCP overlay feature flag is on
-// for the given context. A nil *featureflag.Service returns false safely.
+// for the given context. The default is on; a flag provider can still turn it
+// off, and a nil *featureflag.Service falls back to the default.
 func IsEnabled(ctx context.Context, flags *featureflag.Service) bool {
-	return flags.IsEnabled(ctx, FeatureFlagKey, false)
+	return flags.IsEnabled(ctx, FeatureFlagKey, true)
 }
 
 // BuildTaskOverlay returns the MCP overlay for a task dispatching agent. It
@@ -112,7 +133,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 	var apps []runtimeapps.ConnectedApp
 
 	for _, cap := range caps {
-		entries := capabilityMCPServers(cap.Kind, cap.Target)
+		entries := capabilityMCPServers(cap.Kind, cap.Target, cap.Match, cap.Label, cap.Tags)
 		for name, srv := range entries {
 			servers[name] = srv
 			apps = append(apps, runtimeapps.ConnectedApp{
@@ -125,7 +146,7 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 	}
 
 	if len(servers) == 0 {
-		// All resolved capabilities are device kinds (Phase 5 stubs). Return
+		// Only kinds without a backend (computer_use) were resolved. Return
 		// empty rather than wiring an unusable overlay.
 		return runtimeapps.MCPOverlayResult{}, nil
 	}
@@ -138,11 +159,14 @@ func BuildTaskOverlay(ctx context.Context, originatorUserID pgtype.UUID, agent d
 }
 
 // capabilityMCPServers returns the MCP server entry for a resolved capability.
-// Browser returns a real stdio entry (playwright by default, chrome-devtools-mcp
-// when target["provider"] says so). Device kinds return nil — they are Phase 5
-// integration points; adding support means adding one case here and the matching
-// probe in server/internal/daemon/capabilities.go. No other code changes.
-func capabilityMCPServers(kind string, target map[string]json.RawMessage) map[string]capabilityMCPServer {
+// Browser returns a stdio entry (playwright by default, chrome-devtools-mcp when
+// target["provider"] says so). android_device returns the multica-device-mcp
+// connector: the daemon reported where the hub's CLI lives (target
+// connector_command / connector_cli / hub_url, none of them secret), and the
+// connector leases a phone matching the case's constraint under the case's
+// label. Without a reported path it falls back to npx, which needs the package
+// published or cached on the host.
+func capabilityMCPServers(kind string, target map[string]json.RawMessage, match map[string]string, label string, tags map[string]string) map[string]capabilityMCPServer {
 	switch kind {
 	case "browser":
 		provider := "playwright"
@@ -164,16 +188,81 @@ func capabilityMCPServers(kind string, target map[string]json.RawMessage) map[st
 			}
 		}
 
-	case "android_device", "ios_device", "computer_use":
-		// Phase 5: these device kinds do not yet have an MCP server entry.
-		// A run that resolves to one of these kinds should be blocked at
-		// dispatch (resolveRunCapabilities returning ok=false) rather than
-		// silently running without the device.
+	case "android_device":
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, withPlatform(match, "android"), label, tags)}
+
+	case "ios_device":
+		// An iPhone on the same hub (driven by PulsePhone on the test host):
+		// the same connector, pinned to the ios platform so an Android phone
+		// is never leased for an iOS case.
+		return map[string]capabilityMCPServer{MCPDeviceServerName: deviceConnectorServer(target, withPlatform(match, "ios"), label, tags)}
+
+	case "computer_use":
+		// No hub backend yet: a run bound to this kind is blocked at dispatch
+		// by the resolver rather than launched without its device.
 		return nil
 
 	default:
 		return nil
 	}
+}
+
+// withPlatform pins the lease match to the capability kind's platform. The
+// kind is authoritative: a case constraint naming the other platform would
+// bind an android_device round to an iPhone, so it is overwritten, not merged.
+func withPlatform(match map[string]string, platform string) map[string]string {
+	out := make(map[string]string, len(match)+1)
+	for k, v := range match {
+		out[k] = v
+	}
+	out["platform"] = platform
+	return out
+}
+
+// deviceConnectorServer builds the `multica-device` stdio entry.
+func deviceConnectorServer(target map[string]json.RawMessage, match map[string]string, label string, tags map[string]string) capabilityMCPServer {
+	str := func(key string) string {
+		raw, ok := target[key]
+		if !ok {
+			return ""
+		}
+		var v string
+		if json.Unmarshal(raw, &v) != nil {
+			return ""
+		}
+		return v
+	}
+	hub := str("hub_url")
+	if hub == "" {
+		hub = defaultDeviceHubURL
+	}
+	if match == nil {
+		match = map[string]string{}
+	}
+	// The match travels as a CLI argument, not HTML: keep `>=13` readable
+	// instead of json.Marshal's default `\u003e=13`.
+	var matchJSON bytes.Buffer
+	enc := json.NewEncoder(&matchJSON)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(match)
+	tail := []string{"connect", "--hub", hub, "--acquire", strings.TrimSpace(matchJSON.String())}
+	if label != "" {
+		tail = append(tail, "--label", label)
+	}
+	tagKeys := make([]string, 0, len(tags))
+	for k := range tags {
+		if k != "" && tags[k] != "" {
+			tagKeys = append(tagKeys, k)
+		}
+	}
+	sort.Strings(tagKeys)
+	for _, k := range tagKeys {
+		tail = append(tail, "--tag", k+"="+tags[k])
+	}
+	if command, cli := str("connector_command"), str("connector_cli"); command != "" && cli != "" {
+		return capabilityMCPServer{Command: command, Args: append([]string{cli}, tail...)}
+	}
+	return capabilityMCPServer{Command: "npx", Args: append([]string{"-y", "multica-device-mcp"}, tail...)}
 }
 
 // displayNameForKind returns a human-readable label for a capability kind.

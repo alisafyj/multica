@@ -62,6 +62,18 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
+  describe("project resources", () => {
+    it("falls back safely when a project resource list is malformed", async () => {
+      stubFetchJson({ resources: [{ id: 42 }], total: 1 });
+      const client = new ApiClient("https://api.example.test");
+
+      await expect(client.listProjectResources("project-1")).resolves.toEqual({
+        resources: [],
+        total: 0,
+      });
+    });
+  });
+
   describe("listTimeline", () => {
     it("falls back to an empty array when the body is null", async () => {
       stubFetchJson(null);
@@ -320,7 +332,14 @@ describe("ApiClient schema fallback", () => {
       stubFetchJson({ issues: "not-an-array", total: 0 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.searchIssues({ q: "bug" });
-      expect(res).toEqual({ issues: [], total: 0 });
+      expect(res).toEqual({ issues: [] });
+    });
+
+    it("accepts a response without an exact total", async () => {
+      stubFetchJson({ issues: [] });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.searchIssues({ q: "bug" });
+      expect(res).toEqual({ issues: [] });
     });
   });
 
@@ -329,7 +348,14 @@ describe("ApiClient schema fallback", () => {
       stubFetchJson({ projects: "not-an-array", total: 0 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.searchProjects({ q: "roadmap" });
-      expect(res).toEqual({ projects: [], total: 0 });
+      expect(res).toEqual({ projects: [] });
+    });
+
+    it("accepts a response without an exact total", async () => {
+      stubFetchJson({ projects: [] });
+      const client = new ApiClient("https://api.example.test");
+      const res = await client.searchProjects({ q: "roadmap" });
+      expect(res).toEqual({ projects: [] });
     });
   });
 

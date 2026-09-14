@@ -195,9 +195,11 @@ const MODEL_PRICING: Record<
   // -- Anthropic: current generation. Sonnet 5 uses Anthropic's published
   //    intro launch rate ($2 / $10 through 2026-08-31). This static map has
   //    no future-dated pricing support yet, so update the row when the
-  //    post-intro $3 / $15 rate takes effect. Fable 5 is a Mythos-class SKU
-  //    at 10/50; Opus 4.5 through Opus 5 stay on the lower 5/25 Opus tier. --
+  //    post-intro $3 / $15 rate takes effect. Fable 5 and 5.1 are Mythos-class
+  //    SKUs at 10/50 (5.1 prices cache reads at 0.025x input, a quarter of the
+  //    usual 0.1x); Opus 4.5 through Opus 5 stay on the lower 5/25 Opus tier. --
   "claude-sonnet-5":     { input: 2,    output: 10,   cacheRead: 0.20, cacheWrite: 2.50 },
+  "claude-fable-5-1":   { input: 10,   output: 50,   cacheRead: 0.25, cacheWrite: 12.50 },
   "claude-fable-5":     { input: 10,   output: 50,   cacheRead: 1.00, cacheWrite: 12.50 },
   "claude-opus-5":      { input: 5,    output: 25,   cacheRead: 0.50, cacheWrite: 6.25 },
   "claude-haiku-4-5":   { input: 1,    output: 5,    cacheRead: 0.10, cacheWrite: 1.25 },
@@ -571,7 +573,7 @@ export function collectUnmappedModels(rows: readonly Priceable[]): string[] {
       uncosted.output > 0 ||
       uncosted.cacheRead > 0 ||
       uncosted.cacheWrite > 0;
-    if (!needsEstimate && (r.cost_usd_ticks ?? 0) > 0) continue;
+    if (!needsEstimate) continue;
     set.add(pricingKey(r.model, r.provider));
   }
   return Array.from(set).toSorted();
@@ -741,7 +743,11 @@ export interface TaskUsageSummary {
   /** input + output + cacheRead + cacheWrite, matching the usage page's headline. */
   tokens: number;
   cost: number;
+  /** Every consumed token has a reported cost or an available estimate. */
+  costComplete: boolean;
   cacheSavings: number;
+  /** Cache savings need rates even when the provider reported the cost. */
+  cacheSavingsComplete: boolean;
   input: number;
   output: number;
   cacheRead: number;
@@ -770,6 +776,7 @@ export function summarizeTaskUsage(
   const models: string[] = [];
   const summary: TaskUsageSummary = {
     tokens: 0, cost: 0, cacheSavings: 0,
+    costComplete: true, cacheSavingsComplete: true,
     input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
     models,
   };
@@ -781,6 +788,13 @@ export function summarizeTaskUsage(
     summary.cacheWrite += slice.cache_write_tokens;
     summary.cost += estimateCost(slice);
     summary.cacheSavings += estimateCacheSavings(slice);
+    if (!isModelPriced(slice.model, slice.provider)) {
+      const uncosted = uncostedTokens(slice);
+      if (Object.values(uncosted).some((tokens) => tokens > 0)) {
+        summary.costComplete = false;
+      }
+      if (slice.cache_read_tokens > 0) summary.cacheSavingsComplete = false;
+    }
     if (slice.model && !models.includes(slice.model)) models.push(slice.model);
   }
   summary.tokens =

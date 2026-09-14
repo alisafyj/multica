@@ -10,6 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestListRuntimeCapabilities_NoToolsInPATH_ReturnsEmpty(t *testing.T) {
+	withoutDeviceHub(t)
 	old := capabilitiesLookPath
 	defer func() { capabilitiesLookPath = old }()
 	capabilitiesLookPath = func(name string) (string, error) {
@@ -26,6 +27,7 @@ func TestListRuntimeCapabilities_NoToolsInPATH_ReturnsEmpty(t *testing.T) {
 }
 
 func TestListRuntimeCapabilities_NpxAvailable_ReturnsPlaywright(t *testing.T) {
+	withoutDeviceHub(t)
 	old := capabilitiesLookPath
 	defer func() { capabilitiesLookPath = old }()
 	capabilitiesLookPath = func(name string) (string, error) {
@@ -57,6 +59,7 @@ func TestListRuntimeCapabilities_NpxAvailable_ReturnsPlaywright(t *testing.T) {
 }
 
 func TestListRuntimeCapabilities_ChromeDevtoolsAvailable_ReturnsDevtools(t *testing.T) {
+	withoutDeviceHub(t)
 	old := capabilitiesLookPath
 	defer func() { capabilitiesLookPath = old }()
 	capabilitiesLookPath = func(name string) (string, error) {
@@ -82,6 +85,7 @@ func TestListRuntimeCapabilities_ChromeDevtoolsAvailable_ReturnsDevtools(t *test
 }
 
 func TestListRuntimeCapabilities_BothToolsAvailable_ReturnsBoth(t *testing.T) {
+	withoutDeviceHub(t)
 	old := capabilitiesLookPath
 	defer func() { capabilitiesLookPath = old }()
 	capabilitiesLookPath = func(name string) (string, error) {
@@ -146,4 +150,12 @@ func TestCapabilitySummary_NoSecretFields(t *testing.T) {
 			}
 		}
 	}
+}
+
+// withoutDeviceHub points the probe at a closed port: a multica-device-mcp hub
+// running on the developer's machine must not leak real phones into these
+// inventories.
+func withoutDeviceHub(t *testing.T) {
+	t.Helper()
+	t.Setenv(DeviceHubURLEnv, "http://127.0.0.1:1")
 }

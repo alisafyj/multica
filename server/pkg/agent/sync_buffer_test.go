@@ -1,0 +1,25 @@
+package agent
+
+import (
+	"bytes"
+	"sync"
+)
+
+// syncBuffer is a bytes.Buffer safe for logging goroutines to write while a
+// test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}

@@ -317,6 +317,7 @@
     "import_button": "ワークスペースにインポート",
     "importing": "インポート中…",
     "skill_files_other": "{{count}} 個のファイル",
+    "skill_files_unavailable": "ファイル利用不可",
     "skill_name_label": "ワークスペースのスキル名",
     "skill_description_label": "説明",
     "skill_description_placeholder": "任意 — エージェントがこのスキルをいつ使うべきかを説明してください。",

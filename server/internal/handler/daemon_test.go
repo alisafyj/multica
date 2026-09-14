@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,42 +25,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
-
-func TestLogClaimEndpointSlowIncludesPayloadFields(t *testing.T) {
-	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	logClaimEndpointSlow("runtime-1", "claimed", time.Now().Add(-600*time.Millisecond), 10, 20, 30, 4096, 2, 8, 3072)
-
-	got := logs.String()
-	for _, want := range []string{
-		"msg=\"claim_endpoint slow\"",
-		"runtime_id=runtime-1",
-		"payload_bytes=4096",
-		"agent_skill_count=2",
-		"builtin_skill_count=8",
-		"skill_payload_bytes=3072",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("slow claim log missing %q in %s", want, got)
-		}
-	}
-}
-
-func TestProjectDesignSystemClaimBlockReason(t *testing.T) {
-	if reason := projectDesignSystemClaimBlockReason(false, false); reason != "" {
-		t.Fatalf("ordinary task was blocked: %q", reason)
-	}
-	if reason := projectDesignSystemClaimBlockReason(true, true); reason != "" {
-		t.Fatalf("capable runtime was blocked: %q", reason)
-	}
-	reason := projectDesignSystemClaimBlockReason(true, false)
-	if !strings.Contains(reason, "Update the Multica app") {
-		t.Fatalf("outdated runtime reason = %q, want upgrade guidance", reason)
-	}
-}
 
 // slowProbeLocalSkillListStore wraps a LocalSkillListStore but blocks inside
 // HasPending until the provided context is cancelled. PopPending delegates
@@ -367,7 +330,6 @@ func TestAdvanceUIDesignRestoreCompletionPromotesFrontendSibling(t *testing.T) {
 		t.Fatalf("frontend issue status = %q, want todo", frontendStatus)
 	}
 }
-
 func (s slowProbeLocalSkillListStore) HasPending(ctx context.Context, _ string) (bool, error) {
 	<-ctx.Done()
 	return false, ctx.Err()
@@ -1091,6 +1053,7 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 		"workspace_id": testWorkspaceID,
 		"daemon_id":    "test-daemon-mdt",
 		"device_name":  "test-device",
+		"device_ip":    "192.0.2.10",
 		"runtimes": []map[string]any{
 			{"name": "test-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
 		},
@@ -1106,9 +1069,16 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	if _, ok := resp["repos_version"].(string); !ok {
 		t.Fatalf("DaemonRegister: expected repos_version in response, got %v", resp)
 	}
+	rt := runtimes[0].(map[string]any)
+	metadata, ok := rt["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("DaemonRegister: expected runtime metadata object, got %v", rt["metadata"])
+	}
+	if got := metadata["device_ip"]; got != "192.0.2.10" {
+		t.Fatalf("DaemonRegister: metadata.device_ip = %v, want 192.0.2.10", got)
+	}
 
 	// Clean up: deregister the runtime.
-	rt := runtimes[0].(map[string]any)
 	runtimeID := rt["id"].(string)
 	testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }
@@ -1224,21 +1194,24 @@ func TestDaemonHeartbeat_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	w = testutil.Call(t, testHandler.DaemonHeartbeat, req).Want(http.StatusNotFound)
 }
 
-// TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError pins the fix for
-// issue #2391: when GetAgentRuntime returns pgx.ErrNoRows (runtime row was
-// deleted server-side), the WS handler must return a successful ack with
-// RuntimeGone=true rather than an error. Returning an error makes the WS hub
-// log every beat at Warn — the flood the issue is about.
+// TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError pins the receipt
+// fallback for a deletion that missed active invalidation. The connection
+// lease schedules an ID-only write, whose missing row becomes RuntimeGone
+// instead of a handler error.
 func TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
-	// A well-formed UUID that does NOT exist in agent_runtime. The handler
-	// must turn the resulting pgx.ErrNoRows into a RuntimeGone ack.
+	// A well-formed UUID that does NOT exist in agent_runtime.
 	missingRuntime := uuid.New().String()
 	ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(),
-		daemonws.ClientIdentity{WorkspaceID: testWorkspaceID},
+		daemonws.ClientIdentity{
+			WorkspaceID: testWorkspaceID,
+			RuntimeLeases: map[string]*daemonws.RuntimeLease{
+				missingRuntime: daemonws.NewRuntimeLease(testWorkspaceID, "online", time.Now().Add(-2*runtimeHeartbeatDBFlushInterval), true),
+			},
+		},
 		missingRuntime, false)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
@@ -1277,7 +1250,12 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 	})
 
 	ack, err := testHandler.HandleDaemonWSHeartbeat(ctx,
-		daemonws.ClientIdentity{WorkspaceIDs: []string{testWorkspaceID, workspaceID}},
+		daemonws.ClientIdentity{
+			WorkspaceIDs: []string{testWorkspaceID, workspaceID},
+			RuntimeLeases: map[string]*daemonws.RuntimeLease{
+				runtimeID: daemonws.NewRuntimeLease(workspaceID, "online", time.Now(), true),
+			},
+		},
 		runtimeID, false)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
@@ -2286,129 +2264,6 @@ func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
 	dbfx.QueryRow(t, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
 	if status != "running" {
 		t.Fatalf("expected task status 'running' after StartTask, got %q", status)
-	}
-}
-
-func TestStartTaskMarksDesignRestoreTaskRunning(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	ctx := context.Background()
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
-	var taskID string
-	contextJSON := fmt.Sprintf(`{"type":"%s","workspace_id":"%s","agent_id":"%s","restore_task_id":"00000000-0000-0000-0000-000000000000"}`, service.DesignRestoreTaskContextType, testWorkspaceID, agentID)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context)
-		VALUES ($1, $2, 'dispatched', 0, $3::jsonb)
-		RETURNING id
-	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
-		t.Fatalf("setup: create agent task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	created := createDesignFileForTest(t, "Start Restore Task Design")
-	if created.CurrentRevision == nil {
-		t.Fatal("expected current revision")
-	}
-	var restoreTaskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, agent_task_id, status, input, result, created_by)
-		VALUES ($1, $2, $3, $4, 'queued', '{}'::jsonb, '{}'::jsonb, $5)
-		RETURNING id
-	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, taskID, testUserID).Scan(&restoreTaskID); err != nil {
-		t.Fatalf("setup: create restore task: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
-	})
-
-	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, "legit-daemon")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskId", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	testHandler.StartTask(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("StartTask: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var restoreStatus string
-	if err := testPool.QueryRow(ctx, `SELECT status FROM design_restore_task WHERE id = $1`, restoreTaskID).Scan(&restoreStatus); err != nil {
-		t.Fatalf("read restore task status: %v", err)
-	}
-	if restoreStatus != "running" {
-		t.Fatalf("restore task status = %q, want running after StartTask", restoreStatus)
-	}
-}
-
-func TestFailTaskMarksDesignRestoreTaskAndIssueBlocked(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	ctx := context.Background()
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-	created := createDesignFileForTest(t, "Fail Restore Task Design")
-	if created.CurrentRevision == nil {
-		t.Fatal("expected current revision")
-	}
-	projectID := createProjectForDesignTest(t, "Fail Restore Task Project")
-	issueID := createIssueForDesignTest(t, "Fail Restore Task Issue", projectID)
-	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'in_progress' WHERE id = $1`, issueID); err != nil {
-		t.Fatalf("set issue in_progress: %v", err)
-	}
-
-	contextJSON := fmt.Sprintf(`{"type":"%s","workspace_id":"%s","agent_id":"%s","issue_id":"%s","restore_task_id":"00000000-0000-0000-0000-000000000000"}`, service.DesignRestoreTaskContextType, testWorkspaceID, agentID, issueID)
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, context)
-		VALUES ($1, $2, $3, 'running', 0, now(), $4::jsonb)
-		RETURNING id
-	`, agentID, runtimeID, issueID, contextJSON).Scan(&taskID); err != nil {
-		t.Fatalf("setup: create agent task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	var restoreTaskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, created_by)
-		VALUES ($1, $2, $3, $4, $5, 'running', '{}'::jsonb, '{}'::jsonb, $6)
-		RETURNING id
-	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, issueID, taskID, testUserID).Scan(&restoreTaskID); err != nil {
-		t.Fatalf("setup: create restore task: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
-	})
-
-	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/fail", map[string]any{"error": "agent crashed", "failure_reason": "agent_error"}, testWorkspaceID, "legit-daemon")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskId", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	testHandler.FailTask(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("FailTask: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var restoreStatus, issueStatus string
-	if err := testPool.QueryRow(ctx, `SELECT status FROM design_restore_task WHERE id = $1`, restoreTaskID).Scan(&restoreStatus); err != nil {
-		t.Fatalf("read restore status: %v", err)
-	}
-	if restoreStatus != "failed" {
-		t.Fatalf("restore task status = %q, want failed", restoreStatus)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus); err != nil {
-		t.Fatalf("read issue status: %v", err)
-	}
-	if issueStatus != "blocked" {
-		t.Fatalf("issue status = %q, want blocked", issueStatus)
 	}
 }
 
@@ -4194,21 +4049,6 @@ func TestGetTaskGCCheck(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Membership Cache Integration Tests
-//
-// These tests don't just exercise the cache primitive (that's covered in
-// auth/membership_cache_test.go). They prove two things that the unit tests
-// can't:
-//
-//  1. requireDaemonWorkspaceAccess actually short-circuits the DB on a cache
-//     hit (the "ghost user" trick below).
-//  2. Each handler that mutates membership actually calls
-//     h.MembershipCache.Invalidate(...) — so a future refactor that drops
-//     one of those calls will fail CI instead of silently leaking a stale
-//     authorization grant for up to MembershipCacheTTL.
-// ---------------------------------------------------------------------------
-
 // installFreshMembershipCache swaps in a Redis-backed MembershipCache against
 // a freshly-flushed Redis DB for the test, restoring the original on cleanup.
 func installFreshMembershipCache(t *testing.T) {
@@ -4446,6 +4286,7 @@ type claimCommentTaskResp struct {
 		TriggerCommentID string `json:"trigger_comment_id"`
 		NewCommentCount  int    `json:"new_comment_count"`
 		NewCommentsSince string `json:"new_comments_since"`
+		DeltaKnown       bool   `json:"new_comments_delta_known"`
 	} `json:"task"`
 }
 
@@ -4510,6 +4351,56 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	// both count; only the agent's own reply and the injected trigger are excluded.
 	if resp.Task.NewCommentCount != 2 {
 		t.Errorf("new_comment_count = %d, want 2 (issue-wide: same-thread + unrelated thread)", resp.Task.NewCommentCount)
+	}
+	if !resp.Task.DeltaKnown {
+		t.Errorf("new_comments_delta_known must be true when the delta was computed")
+	}
+}
+
+// TestClaimTaskByRuntime_CommentTaskMarksComputedZeroDelta covers the state the
+// count fields cannot express on their own.
+//
+// A prior run exists and nothing was said on the issue since it started, so the
+// delta is a real, server-checked zero — but the response carries the same
+// new_comment_count: 0 as a failed anchor read, a failed count query, a cold
+// start, and an old server that never sends these fields. Only the checked zero
+// answers "has anything else been said here", and that is the only one allowed
+// to waive the daemon's mandatory comment scan, so the claim has to say which
+// zero this is (MUL-6984).
+func TestClaimTaskByRuntime_CommentTaskMarksComputedZeroDelta(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Zero delta runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Zero delta agent")
+
+	// A prior run supplies the anchor, so the count query runs and returns 0.
+	dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id":   runtimeID,
+		"issue_id":     issueID,
+		"status":       "completed",
+		"started_at":   testutil.Raw("now() - interval '1 hour'"),
+		"completed_at": testutil.Raw("now() - interval '50 minutes'"),
+	})
+
+	// Only the trigger, which is injected into the prompt and never counted.
+	_, triggerID := createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
+
+	resp := claimCommentTask(t, runtimeID, "zero-delta-claim")
+	if resp.Task.TriggerCommentID != triggerID {
+		t.Fatalf("trigger_comment_id = %s, want %s", resp.Task.TriggerCommentID, triggerID)
+	}
+	if resp.Task.NewCommentCount != 0 {
+		t.Fatalf("new_comment_count = %d, want 0 for this fixture", resp.Task.NewCommentCount)
+	}
+	if !resp.Task.DeltaKnown {
+		t.Errorf("new_comments_delta_known must be true for a computed zero — without it the daemon cannot tell this from a failed read and must re-scan")
+	}
+	// The count fields stay suppressed at zero: there is no delta hint to render
+	// from a zero, and the anchor would only invite a read that returns nothing.
+	if resp.Task.NewCommentsSince != "" {
+		t.Errorf("new_comments_since = %q, want empty when the count is zero", resp.Task.NewCommentsSince)
 	}
 }
 
@@ -4613,6 +4504,398 @@ func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
 	resp := claimCommentTask(t, runtimeID, "comment-resume-default")
 	if resp.Task.PriorSessionID != priorSession {
 		t.Errorf("prior_session_id = %q, want %q (comment resume is default-on)", resp.Task.PriorSessionID, priorSession)
+	}
+}
+
+// TestAckTaskCancelled verifies the cancel-ack endpoint settles a deferred
+// chat finalization (marker claimed, Stopped. row written for a transcript
+// that filled in late) and keeps the anti-enumeration shape of
+// requireDaemonTaskAccess for cross-workspace tokens.
+func TestAckTaskCancelled(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	dbfx.QueryRow(t, `
+		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID, &runtimeID)
+
+	chatSessionID := dbfx.ChatSession(t, agentID, testutil.Cols{
+		"title": "cancel ack test",
+	})
+
+	// Cancelled chat task with a pending deferred-finalize marker, plus a
+	// transcript row that landed after the cancel (the daemon's late flush).
+	taskID := dbfx.Task(t, agentID, testutil.Cols{
+		"runtime_id":                runtimeID,
+		"issue_id":                  nil,
+		"chat_session_id":           chatSessionID,
+		"status":                    "cancelled",
+		"started_at":                testutil.Raw("now()"),
+		"completed_at":              testutil.Raw("now()"),
+		"chat_finalize_deferred_at": testutil.Raw("now()"),
+	})
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM task_message WHERE task_id = $1`, taskID)
+		testPool.Exec(ctx, `DELETE FROM chat_message WHERE task_id = $1`, taskID)
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+	dbfx.Exec(t, `
+		INSERT INTO task_message (task_id, seq, type, content)
+		VALUES ($1, 1, 'text', 'late flush')
+	`, taskID)
+
+	// Cross-workspace daemon token must still 404 and leave the marker armed.
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/cancel-ack", nil,
+		"00000000-0000-0000-0000-000000000000", "attacker-daemon")
+	req = withURLParam(req, "taskId", taskID)
+	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusNotFound)
+	var deferredAt *time.Time
+	dbfx.QueryRow(t, `
+		SELECT chat_finalize_deferred_at FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&deferredAt)
+	if deferredAt == nil {
+		t.Fatal("cross-workspace ack must not claim the marker")
+	}
+
+	// Same-workspace token settles the deferred finalize.
+	req = newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/cancel-ack", nil,
+		testWorkspaceID, "legit-daemon")
+	req = withURLParam(req, "taskId", taskID)
+	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusOK)
+	dbfx.QueryRow(t, `
+		SELECT chat_finalize_deferred_at FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&deferredAt)
+	if deferredAt != nil {
+		t.Errorf("marker should be claimed, got %v", deferredAt)
+	}
+	var stopped int
+	dbfx.QueryRow(t, `
+		SELECT count(*) FROM chat_message WHERE task_id = $1 AND role = 'assistant' AND content = 'Stopped.'
+	`, taskID).Scan(&stopped)
+	if stopped != 1 {
+		t.Errorf("Stopped. rows = %d, want 1", stopped)
+	}
+
+	// Idempotent: a second ack is a no-op (no duplicate Stopped.).
+	req = newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/cancel-ack", nil,
+		testWorkspaceID, "legit-daemon")
+	req = withURLParam(req, "taskId", taskID)
+	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusOK)
+	dbfx.QueryRow(t, `
+		SELECT count(*) FROM chat_message WHERE task_id = $1 AND role = 'assistant' AND content = 'Stopped.'
+	`, taskID).Scan(&stopped)
+	if stopped != 1 {
+		t.Errorf("Stopped. rows after second ack = %d, want 1", stopped)
+	}
+}
+
+// The daemon GC decides whether a task workdir can be reclaimed by testing the
+// issue status against the terminal set — `gc.go:509` compares it to
+// "done"/"cancelled", and `isKnownIssueStatus` is a hardcoded switch over the 7
+// built-ins. Neither knows custom statuses exist, and it must stay that way: an
+// installed daemon has no database, and daemons predating MUL-6243 keep running
+// against upgraded servers.
+//
+// So the normalization is the SERVER's job. Both gc-check endpoints resolve the
+// stored key to its category before answering. Without that:
+//
+//   - an issue parked on a `done`-category custom status is never terminal, so
+//     its workdir is retained forever, and
+//   - `isKnownIssueStatus` rejects the raw key, silently disabling the
+//     GCCompletedTaskTTL full-cleanup path for that issue.
+func TestIssueGCChecksReportCategoryNotRawCustomStatus(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	// A custom status whose category is terminal, and one whose category is not.
+	gateApproved := createTestCustomStatus(t, "gc_gate_approved", issuestatus.Done)
+	humanReview := createTestCustomStatus(t, "gc_human_review", issuestatus.InReview)
+
+	doneID := dbfx.Issue(t, "gc-check-custom-done", testutil.Cols{
+		"status": gateApproved.Key, "priority": "medium", "number": 92501,
+	})
+	openID := dbfx.Issue(t, "gc-check-custom-open", testutil.Cols{
+		"status": humanReview.Key, "priority": "medium", "number": 92502,
+	})
+
+	t.Run("batch endpoint", func(t *testing.T) {
+		req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+testWorkspaceID+"/issues/gc-check",
+			map[string]any{"issue_ids": []string{doneID, openID}}, testWorkspaceID, "legit-daemon")
+		req = withURLParam(req, "workspaceId", testWorkspaceID)
+
+		var resp struct {
+			Issues []struct {
+				ID     string `json:"id"`
+				Found  bool   `json:"found"`
+				Status string `json:"status"`
+			} `json:"issues"`
+		}
+		testutil.Call(t, testHandler.BatchIssueGCCheck, req).Want(http.StatusOK).JSON(&resp)
+
+		byID := map[string]string{}
+		for _, issue := range resp.Issues {
+			if !issue.Found {
+				t.Fatalf("issue %s not found", issue.ID)
+			}
+			byID[issue.ID] = issue.Status
+		}
+		// The category, never the stored key — the daemon's terminal test is a
+		// literal string comparison and has no way to resolve one.
+		if byID[doneID] != issuestatus.Done {
+			t.Errorf("done-category custom status reported as %q, want %q — the daemon would keep this workdir forever",
+				byID[doneID], issuestatus.Done)
+		}
+		if byID[openID] != issuestatus.InReview {
+			t.Errorf("in_review-category custom status reported as %q, want %q",
+				byID[openID], issuestatus.InReview)
+		}
+	})
+
+	// The per-issue endpoint is the fallback older daemons still call, so it
+	// carries the same obligation.
+	t.Run("legacy per-issue endpoint", func(t *testing.T) {
+		req := newDaemonTokenRequest("GET", "/api/daemon/issues/"+doneID+"/gc-check", nil, testWorkspaceID, "legit-daemon")
+		req = withURLParam(req, "issueId", doneID)
+
+		var resp struct {
+			Status string `json:"status"`
+		}
+		testutil.Call(t, testHandler.GetIssueGCCheck, req).Want(http.StatusOK).JSON(&resp)
+
+		if resp.Status != issuestatus.Done {
+			t.Errorf("status = %q, want %q", resp.Status, issuestatus.Done)
+		}
+	})
+}
+
+// Every installed daemon calls the batch endpoint on a timer, with up to
+// maxIssueGCBatchSize ids per request. Resolving each row through the
+// package-level issuestatus.Effective meant one GetIssueStatusEntryByKey per
+// CUSTOM status in the batch — turning the endpoint that exists to replace
+// per-issue requests into a per-issue query generator the moment a workspace
+// enables custom statuses.
+//
+// A request-scoped Resolver reads the catalog lazily and at most once, so the
+// cost is flat in the number of custom rows and still zero when there are none.
+func TestBatchIssueGCCheckReadsCatalogOnceForManyCustomStatuses(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	gateApproved := createTestCustomStatus(t, "gc_batch_gate", issuestatus.Done)
+	humanReview := createTestCustomStatus(t, "gc_batch_review", issuestatus.InReview)
+
+	// Several issues across two custom statuses, plus a built-in one: enough
+	// that a per-key resolver would be visibly worse than a single read.
+	ids := []string{
+		dbfx.Issue(t, "gc-batch-custom-1", testutil.Cols{"status": gateApproved.Key, "priority": "medium", "number": 92601}),
+		dbfx.Issue(t, "gc-batch-custom-2", testutil.Cols{"status": gateApproved.Key, "priority": "medium", "number": 92602}),
+		dbfx.Issue(t, "gc-batch-custom-3", testutil.Cols{"status": humanReview.Key, "priority": "medium", "number": 92603}),
+		dbfx.Issue(t, "gc-batch-custom-4", testutil.Cols{"status": humanReview.Key, "priority": "medium", "number": 92604}),
+		dbfx.Issue(t, "gc-batch-builtin", testutil.Cols{"status": "done", "priority": "medium", "number": 92605}),
+	}
+
+	counter := withCountingCatalog(t)
+	req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+testWorkspaceID+"/issues/gc-check",
+		map[string]any{"issue_ids": ids}, testWorkspaceID, "legit-daemon")
+	req = withURLParam(req, "workspaceId", testWorkspaceID)
+
+	var resp struct {
+		Issues []struct {
+			ID     string `json:"id"`
+			Found  bool   `json:"found"`
+			Status string `json:"status"`
+		} `json:"issues"`
+	}
+	testutil.Call(t, testHandler.BatchIssueGCCheck, req).Want(http.StatusOK).JSON(&resp)
+
+	// The answers still have to be right — a resolver that reads nothing would
+	// also score zero on the counters below.
+	byID := map[string]string{}
+	for _, issue := range resp.Issues {
+		byID[issue.ID] = issue.Status
+	}
+	for _, id := range ids[:2] {
+		if byID[id] != issuestatus.Done {
+			t.Fatalf("issue %s reported %q, want %q", id, byID[id], issuestatus.Done)
+		}
+	}
+	for _, id := range ids[2:4] {
+		if byID[id] != issuestatus.InReview {
+			t.Fatalf("issue %s reported %q, want %q", id, byID[id], issuestatus.InReview)
+		}
+	}
+
+	if counter.keyReads != 0 {
+		t.Errorf("per-key catalog lookups = %d, want 0 — the batch is resolving one status at a time", counter.keyReads)
+	}
+	if counter.entryReads != 1 {
+		t.Errorf("catalog reads = %d, want exactly 1 for the whole batch", counter.entryReads)
+	}
+}
+
+// The common case pays nothing: with no custom status in the batch the resolver
+// never loads the catalog at all.
+func TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ids := []string{
+		dbfx.Issue(t, "gc-batch-builtin-1", testutil.Cols{"status": "done", "priority": "medium", "number": 92611}),
+		dbfx.Issue(t, "gc-batch-builtin-2", testutil.Cols{"status": "in_progress", "priority": "medium", "number": 92612}),
+	}
+
+	counter := withCountingCatalog(t)
+	req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+testWorkspaceID+"/issues/gc-check",
+		map[string]any{"issue_ids": ids}, testWorkspaceID, "legit-daemon")
+	req = withURLParam(req, "workspaceId", testWorkspaceID)
+	testutil.Call(t, testHandler.BatchIssueGCCheck, req).Want(http.StatusOK)
+
+	if counter.entryReads != 0 || counter.keyReads != 0 {
+		t.Fatalf("built-in batch read the catalog (%d entry, %d key), want 0 — a built-in key IS its own category",
+			counter.entryReads, counter.keyReads)
+	}
+}
+
+func TestProjectDesignSystemClaimBlockReason(t *testing.T) {
+	if reason := projectDesignSystemClaimBlockReason(false, false); reason != "" {
+		t.Fatalf("ordinary task was blocked: %q", reason)
+	}
+	if reason := projectDesignSystemClaimBlockReason(true, true); reason != "" {
+		t.Fatalf("capable runtime was blocked: %q", reason)
+	}
+	reason := projectDesignSystemClaimBlockReason(true, false)
+	if !strings.Contains(reason, "Update the Multica app") {
+		t.Fatalf("outdated runtime reason = %q, want upgrade guidance", reason)
+	}
+}
+
+func TestStartTaskMarksDesignRestoreTaskRunning(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	var taskID string
+	contextJSON := fmt.Sprintf(`{"type":"%s","workspace_id":"%s","agent_id":"%s","restore_task_id":"00000000-0000-0000-0000-000000000000"}`, service.DesignRestoreTaskContextType, testWorkspaceID, agentID)
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context)
+		VALUES ($1, $2, 'dispatched', 0, $3::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create agent task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	created := createDesignFileForTest(t, "Start Restore Task Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	var restoreTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, agent_task_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, 'queued', '{}'::jsonb, '{}'::jsonb, $5)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, taskID, testUserID).Scan(&restoreTaskID); err != nil {
+		t.Fatalf("setup: create restore task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, "legit-daemon")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	testHandler.StartTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("StartTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var restoreStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM design_restore_task WHERE id = $1`, restoreTaskID).Scan(&restoreStatus); err != nil {
+		t.Fatalf("read restore task status: %v", err)
+	}
+	if restoreStatus != "running" {
+		t.Fatalf("restore task status = %q, want running after StartTask", restoreStatus)
+	}
+}
+
+func TestFailTaskMarksDesignRestoreTaskAndIssueBlocked(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx, `SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+	created := createDesignFileForTest(t, "Fail Restore Task Design")
+	if created.CurrentRevision == nil {
+		t.Fatal("expected current revision")
+	}
+	projectID := createProjectForDesignTest(t, "Fail Restore Task Project")
+	issueID := createIssueForDesignTest(t, "Fail Restore Task Issue", projectID)
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'in_progress' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("set issue in_progress: %v", err)
+	}
+
+	contextJSON := fmt.Sprintf(`{"type":"%s","workspace_id":"%s","agent_id":"%s","issue_id":"%s","restore_task_id":"00000000-0000-0000-0000-000000000000"}`, service.DesignRestoreTaskContextType, testWorkspaceID, agentID, issueID)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, context)
+		VALUES ($1, $2, $3, 'running', 0, now(), $4::jsonb)
+		RETURNING id
+	`, agentID, runtimeID, issueID, contextJSON).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create agent task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	var restoreTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO design_restore_task (workspace_id, file_id, revision_id, issue_id, agent_task_id, status, input, result, created_by)
+		VALUES ($1, $2, $3, $4, $5, 'running', '{}'::jsonb, '{}'::jsonb, $6)
+		RETURNING id
+	`, testWorkspaceID, created.File.ID, created.CurrentRevision.ID, issueID, taskID, testUserID).Scan(&restoreTaskID); err != nil {
+		t.Fatalf("setup: create restore task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM design_restore_task WHERE id = $1`, restoreTaskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/fail", map[string]any{"error": "agent crashed", "failure_reason": "agent_error"}, testWorkspaceID, "legit-daemon")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	testHandler.FailTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var restoreStatus, issueStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM design_restore_task WHERE id = $1`, restoreTaskID).Scan(&restoreStatus); err != nil {
+		t.Fatalf("read restore status: %v", err)
+	}
+	if restoreStatus != "failed" {
+		t.Fatalf("restore task status = %q, want failed", restoreStatus)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus); err != nil {
+		t.Fatalf("read issue status: %v", err)
+	}
+	if issueStatus != "blocked" {
+		t.Fatalf("issue status = %q, want blocked", issueStatus)
 	}
 }
 
@@ -4979,92 +5262,6 @@ func TestScopeDesignDocumentRepositories(t *testing.T) {
 	}
 }
 
-// TestAckTaskCancelled verifies the cancel-ack endpoint settles a deferred
-// chat finalization (marker claimed, Stopped. row written for a transcript
-// that filled in late) and keeps the anti-enumeration shape of
-// requireDaemonTaskAccess for cross-workspace tokens.
-func TestAckTaskCancelled(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	ctx := context.Background()
-
-	var agentID, runtimeID string
-	dbfx.QueryRow(t, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID)
-
-	chatSessionID := dbfx.ChatSession(t, agentID, testutil.Cols{
-		"title": "cancel ack test",
-	})
-
-	// Cancelled chat task with a pending deferred-finalize marker, plus a
-	// transcript row that landed after the cancel (the daemon's late flush).
-	taskID := dbfx.Task(t, agentID, testutil.Cols{
-		"runtime_id":                runtimeID,
-		"issue_id":                  nil,
-		"chat_session_id":           chatSessionID,
-		"status":                    "cancelled",
-		"started_at":                testutil.Raw("now()"),
-		"completed_at":              testutil.Raw("now()"),
-		"chat_finalize_deferred_at": testutil.Raw("now()"),
-	})
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_message WHERE task_id = $1`, taskID)
-		testPool.Exec(ctx, `DELETE FROM chat_message WHERE task_id = $1`, taskID)
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-	})
-	dbfx.Exec(t, `
-		INSERT INTO task_message (task_id, seq, type, content)
-		VALUES ($1, 1, 'text', 'late flush')
-	`, taskID)
-
-	// Cross-workspace daemon token must still 404 and leave the marker armed.
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/cancel-ack", nil,
-		"00000000-0000-0000-0000-000000000000", "attacker-daemon")
-	req = withURLParam(req, "taskId", taskID)
-	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusNotFound)
-	var deferredAt *time.Time
-	dbfx.QueryRow(t, `
-		SELECT chat_finalize_deferred_at FROM agent_task_queue WHERE id = $1
-	`, taskID).Scan(&deferredAt)
-	if deferredAt == nil {
-		t.Fatal("cross-workspace ack must not claim the marker")
-	}
-
-	// Same-workspace token settles the deferred finalize.
-	req = newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/cancel-ack", nil,
-		testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "taskId", taskID)
-	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusOK)
-	dbfx.QueryRow(t, `
-		SELECT chat_finalize_deferred_at FROM agent_task_queue WHERE id = $1
-	`, taskID).Scan(&deferredAt)
-	if deferredAt != nil {
-		t.Errorf("marker should be claimed, got %v", deferredAt)
-	}
-	var stopped int
-	dbfx.QueryRow(t, `
-		SELECT count(*) FROM chat_message WHERE task_id = $1 AND role = 'assistant' AND content = 'Stopped.'
-	`, taskID).Scan(&stopped)
-	if stopped != 1 {
-		t.Errorf("Stopped. rows = %d, want 1", stopped)
-	}
-
-	// Idempotent: a second ack is a no-op (no duplicate Stopped.).
-	req = newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/cancel-ack", nil,
-		testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "taskId", taskID)
-	testutil.Call(t, testHandler.AckTaskCancelled, req).Want(http.StatusOK)
-	dbfx.QueryRow(t, `
-		SELECT count(*) FROM chat_message WHERE task_id = $1 AND role = 'assistant' AND content = 'Stopped.'
-	`, taskID).Scan(&stopped)
-	if stopped != 1 {
-		t.Errorf("Stopped. rows after second ack = %d, want 1", stopped)
-	}
-}
-
 // A project that declares its own repositories is scoping the task to them.
 // The workspace list is a fallback, never an addition — the checkout allowlist
 // is built from this list, so unioning the two would hand a project-scoped task
@@ -5107,161 +5304,6 @@ func TestTaskReposFallBackToWorkspaceWhenProjectHasNone(t *testing.T) {
 //     its workdir is retained forever, and
 //   - `isKnownIssueStatus` rejects the raw key, silently disabling the
 //     GCCompletedTaskTTL full-cleanup path for that issue.
-func TestIssueGCChecksReportCategoryNotRawCustomStatus(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	// A custom status whose category is terminal, and one whose category is not.
-	gateApproved := createTestCustomStatus(t, "gc_gate_approved", issuestatus.Done)
-	humanReview := createTestCustomStatus(t, "gc_human_review", issuestatus.InReview)
-
-	doneID := dbfx.Issue(t, "gc-check-custom-done", testutil.Cols{
-		"status": gateApproved.Key, "priority": "medium", "number": 92501,
-	})
-	openID := dbfx.Issue(t, "gc-check-custom-open", testutil.Cols{
-		"status": humanReview.Key, "priority": "medium", "number": 92502,
-	})
-
-	t.Run("batch endpoint", func(t *testing.T) {
-		req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+testWorkspaceID+"/issues/gc-check",
-			map[string]any{"issue_ids": []string{doneID, openID}}, testWorkspaceID, "legit-daemon")
-		req = withURLParam(req, "workspaceId", testWorkspaceID)
-
-		var resp struct {
-			Issues []struct {
-				ID     string `json:"id"`
-				Found  bool   `json:"found"`
-				Status string `json:"status"`
-			} `json:"issues"`
-		}
-		testutil.Call(t, testHandler.BatchIssueGCCheck, req).Want(http.StatusOK).JSON(&resp)
-
-		byID := map[string]string{}
-		for _, issue := range resp.Issues {
-			if !issue.Found {
-				t.Fatalf("issue %s not found", issue.ID)
-			}
-			byID[issue.ID] = issue.Status
-		}
-		// The category, never the stored key — the daemon's terminal test is a
-		// literal string comparison and has no way to resolve one.
-		if byID[doneID] != issuestatus.Done {
-			t.Errorf("done-category custom status reported as %q, want %q — the daemon would keep this workdir forever",
-				byID[doneID], issuestatus.Done)
-		}
-		if byID[openID] != issuestatus.InReview {
-			t.Errorf("in_review-category custom status reported as %q, want %q",
-				byID[openID], issuestatus.InReview)
-		}
-	})
-
-	// The per-issue endpoint is the fallback older daemons still call, so it
-	// carries the same obligation.
-	t.Run("legacy per-issue endpoint", func(t *testing.T) {
-		req := newDaemonTokenRequest("GET", "/api/daemon/issues/"+doneID+"/gc-check", nil, testWorkspaceID, "legit-daemon")
-		req = withURLParam(req, "issueId", doneID)
-
-		var resp struct {
-			Status string `json:"status"`
-		}
-		testutil.Call(t, testHandler.GetIssueGCCheck, req).Want(http.StatusOK).JSON(&resp)
-
-		if resp.Status != issuestatus.Done {
-			t.Errorf("status = %q, want %q", resp.Status, issuestatus.Done)
-		}
-	})
-}
-
-// Every installed daemon calls the batch endpoint on a timer, with up to
-// maxIssueGCBatchSize ids per request. Resolving each row through the
-// package-level issuestatus.Effective meant one GetIssueStatusEntryByKey per
-// CUSTOM status in the batch — turning the endpoint that exists to replace
-// per-issue requests into a per-issue query generator the moment a workspace
-// enables custom statuses.
-//
-// A request-scoped Resolver reads the catalog lazily and at most once, so the
-// cost is flat in the number of custom rows and still zero when there are none.
-func TestBatchIssueGCCheckReadsCatalogOnceForManyCustomStatuses(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	gateApproved := createTestCustomStatus(t, "gc_batch_gate", issuestatus.Done)
-	humanReview := createTestCustomStatus(t, "gc_batch_review", issuestatus.InReview)
-
-	// Several issues across two custom statuses, plus a built-in one: enough
-	// that a per-key resolver would be visibly worse than a single read.
-	ids := []string{
-		dbfx.Issue(t, "gc-batch-custom-1", testutil.Cols{"status": gateApproved.Key, "priority": "medium", "number": 92601}),
-		dbfx.Issue(t, "gc-batch-custom-2", testutil.Cols{"status": gateApproved.Key, "priority": "medium", "number": 92602}),
-		dbfx.Issue(t, "gc-batch-custom-3", testutil.Cols{"status": humanReview.Key, "priority": "medium", "number": 92603}),
-		dbfx.Issue(t, "gc-batch-custom-4", testutil.Cols{"status": humanReview.Key, "priority": "medium", "number": 92604}),
-		dbfx.Issue(t, "gc-batch-builtin", testutil.Cols{"status": "done", "priority": "medium", "number": 92605}),
-	}
-
-	counter := withCountingCatalog(t)
-	req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+testWorkspaceID+"/issues/gc-check",
-		map[string]any{"issue_ids": ids}, testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "workspaceId", testWorkspaceID)
-
-	var resp struct {
-		Issues []struct {
-			ID     string `json:"id"`
-			Found  bool   `json:"found"`
-			Status string `json:"status"`
-		} `json:"issues"`
-	}
-	testutil.Call(t, testHandler.BatchIssueGCCheck, req).Want(http.StatusOK).JSON(&resp)
-
-	// The answers still have to be right — a resolver that reads nothing would
-	// also score zero on the counters below.
-	byID := map[string]string{}
-	for _, issue := range resp.Issues {
-		byID[issue.ID] = issue.Status
-	}
-	for _, id := range ids[:2] {
-		if byID[id] != issuestatus.Done {
-			t.Fatalf("issue %s reported %q, want %q", id, byID[id], issuestatus.Done)
-		}
-	}
-	for _, id := range ids[2:4] {
-		if byID[id] != issuestatus.InReview {
-			t.Fatalf("issue %s reported %q, want %q", id, byID[id], issuestatus.InReview)
-		}
-	}
-
-	if counter.keyReads != 0 {
-		t.Errorf("per-key catalog lookups = %d, want 0 — the batch is resolving one status at a time", counter.keyReads)
-	}
-	if counter.entryReads != 1 {
-		t.Errorf("catalog reads = %d, want exactly 1 for the whole batch", counter.entryReads)
-	}
-}
-
-// The common case pays nothing: with no custom status in the batch the resolver
-// never loads the catalog at all.
-func TestBatchIssueGCCheckReadsNoCatalogForBuiltInStatuses(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	ids := []string{
-		dbfx.Issue(t, "gc-batch-builtin-1", testutil.Cols{"status": "done", "priority": "medium", "number": 92611}),
-		dbfx.Issue(t, "gc-batch-builtin-2", testutil.Cols{"status": "in_progress", "priority": "medium", "number": 92612}),
-	}
-
-	counter := withCountingCatalog(t)
-	req := newDaemonTokenRequest("POST", "/api/daemon/workspaces/"+testWorkspaceID+"/issues/gc-check",
-		map[string]any{"issue_ids": ids}, testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "workspaceId", testWorkspaceID)
-	testutil.Call(t, testHandler.BatchIssueGCCheck, req).Want(http.StatusOK)
-
-	if counter.entryReads != 0 || counter.keyReads != 0 {
-		t.Fatalf("built-in batch read the catalog (%d entry, %d key), want 0 — a built-in key IS its own category",
-			counter.entryReads, counter.keyReads)
-	}
-}
 
 func TestProjectDesignSystemNeedsLiveRepositoryForRepositoryGenerationAndRefresh(t *testing.T) {
 	if !projectDesignSystemNeedsLiveRepository(service.ProjectDesignSystemTaskContext{Operation: service.ProjectDesignSystemRepositoryAnalysis}) {

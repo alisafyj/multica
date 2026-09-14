@@ -91,6 +91,7 @@ describe("useRealtimeSync — comment activity cache coherence", () => {
     qc.setQueryData<ListIssuesCache>(positionBoardKey, bucketed());
     qc.setQueryData<ListIssuesCache>(lastActivityBoardKey, bucketed());
     qc.setQueryData(issueKeys.timeline("issue-1"), []);
+    qc.setQueryData(issueKeys.pendingInputs("ws-1", "issue-1"), []);
 
     const { ws, handlers } = createRecordingWs();
     renderHook(() => useRealtimeSync(ws, createStores()), {
@@ -107,6 +108,9 @@ describe("useRealtimeSync — comment activity cache coherence", () => {
     // The per-issue timeline is still invalidated as before.
     expect(
       qc.getQueryState(issueKeys.timeline("issue-1"))?.isInvalidated,
+    ).toBe(true);
+    expect(
+      qc.getQueryState(issueKeys.pendingInputs("ws-1", "issue-1"))?.isInvalidated,
     ).toBe(true);
   });
 

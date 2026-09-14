@@ -40,7 +40,7 @@ export const AGENT_SORT_DEFAULT_DIRECTION: Record<
 
 /** Multi-select filter state. Empty array per dimension = inactive. */
 export interface AgentListFilters {
-  /** AgentAvailability values (online / unstable / offline). */
+  /** AgentAvailability values (online / unstable / unknown / offline). */
   availability: string[];
   /** Runtime ids. */
   runtimes: string[];

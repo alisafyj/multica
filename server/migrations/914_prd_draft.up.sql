@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS chat_prd_draft (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    workspace_id uuid NOT NULL,
+    installation_id uuid NOT NULL,
+    channel_chat_id text NOT NULL,
+    channel_thread_id text NOT NULL,
+    source_message_id text NOT NULL,
+    initiator_open_id text NOT NULL,
+    version integer NOT NULL DEFAULT 1 CHECK (version > 0),
+    content jsonb NOT NULL,
+    version_created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    confirmed_content jsonb,
+    confirmation_message_id text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'publishing', 'failed', 'unknown', 'published')),
+    phase text NOT NULL DEFAULT '',
+    claim_token uuid,
+    document_id text NOT NULL DEFAULT '',
+    document_url text NOT NULL DEFAULT '',
+    failure text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);

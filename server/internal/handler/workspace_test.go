@@ -314,12 +314,18 @@ VALUES ($1, $2, gen_random_uuid(), gen_random_uuid(), 's3://workspace-delete/sou
 
 	req := newRequest("DELETE", "/api/workspaces/"+wsID, nil)
 	req = withURLParam(req, "id", wsID)
-	testutil.Call(t, testHandler.DeleteWorkspace, req).Want(http.StatusNoContent)
+	notifier := &recordingRuntimeGoneNotifier{}
+	h := *testHandler
+	h.DaemonRuntimeGone = notifier
+	testutil.Call(t, h.DeleteWorkspace, req).Want(http.StatusNoContent)
 
 	var exists bool
 	dbfx.QueryRow(t, `SELECT EXISTS (SELECT 1 FROM workspace WHERE id = $1)`, wsID).Scan(&exists)
 	if exists {
 		t.Fatal("workspace still exists after owner DELETE")
+	}
+	if len(notifier.runtimeIDs) != 1 || notifier.runtimeIDs[0] != runtimeID {
+		t.Fatalf("runtime-gone notifications = %v, want [%s]", notifier.runtimeIDs, runtimeID)
 	}
 
 	var pendingCount int
@@ -533,6 +539,7 @@ RETURNING id
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage_hourly_dirty WHERE workspace_id = $1`, workspaceID)
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE workspace_id = $1`, workspaceID)
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_media_pending_object WHERE workspace_id = $1`, workspaceID)
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM chat_prd_draft WHERE workspace_id = $1`, workspaceID)
 		}
 	})
 
@@ -551,6 +558,10 @@ VALUES ($1, $2, 'owner')
 		{workspaceID: neighborWorkspaceID, mediaKey: neighborMediaKey},
 	}
 	for _, fixture := range fixtures {
+		dbfx.Exec(t, `
+INSERT INTO chat_prd_draft (workspace_id, installation_id, channel_chat_id, channel_thread_id, source_message_id, initiator_open_id, content)
+VALUES ($1, gen_random_uuid(), 'chat', 'topic', 'message', 'requester', '{}'::jsonb)
+`, fixture.workspaceID)
 		dbfx.QueryRow(t, `
 INSERT INTO issue (workspace_id, title, creator_type, creator_id)
 VALUES ($1, 'Workspace delete tenant isolation', 'member', $2)
@@ -589,12 +600,18 @@ VALUES ($1, $2, gen_random_uuid(), 's3://workspace-delete/tenant-isolation')
 	request := newRequest(http.MethodDelete, "/api/workspaces/"+targetWorkspaceID, nil)
 	request = withURLParam(request, "id", targetWorkspaceID)
 	testutil.Call(t, testHandler.DeleteWorkspace, request).Want(http.StatusNoContent)
+	var remainingDrafts int
+	dbfx.QueryRow(t, `SELECT COUNT(*) FROM chat_prd_draft WHERE workspace_id = $1`, targetWorkspaceID).Scan(&remainingDrafts)
+	if remainingDrafts != 0 {
+		t.Fatalf("deleted workspace retains %d PRD drafts", remainingDrafts)
+	}
 
 	for table, predicate := range map[string]string{
 		"workspace":                    "id",
 		"issue":                        "workspace_id",
 		"comment":                      "workspace_id",
 		"inbox_item":                   "workspace_id",
+		"chat_prd_draft":               "workspace_id",
 		"runtime_profile":              "workspace_id",
 		"task_usage_hourly_dirty":      "workspace_id",
 		"channel_media_pending_object": "workspace_id",

@@ -142,6 +142,15 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// withDaemonToken shares transport and identity without changing login credentials
+// or copying mutexes. An absent claim credential never falls back to login auth.
+func (c *Client) withDaemonToken(token string) *Client {
+	return &Client{
+		baseURL: c.baseURL, token: token, client: c.client,
+		platform: c.platform, version: c.version, os: c.os,
+	}
+}
+
 func cloneDefaultTransport() http.RoundTripper {
 	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
 		return transport.Clone()
@@ -191,26 +200,42 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 	if c.os != "" {
 		req.Header.Set("X-Client-OS", c.os)
 	}
-	req.Header.Set("X-Client-Capabilities", daemonClientCapabilities())
+	req.Header.Set("X-Client-Capabilities", daemonHTTPClientCapabilities())
 }
 
 // daemonClientCapabilities is the X-Client-Capabilities value the daemon
-// advertises on BOTH the HTTP control-plane requests and the WS handshake, so a
-// claim built over WS gets the same capability gating (skill refs,
-// coalesced-comments) as the HTTP path. rpc-v1 advertises WS request/response
-// support (MUL-4257).
+// advertises on the WS handshake. A claim built over WS gets the common
+// capability gating plus WS-only scheduling metadata. rpc-v1 advertises WS
+// request/response support (MUL-4257).
 func daemonClientCapabilities() string {
-	return strings.Join([]string{
+	return strings.Join(append(daemonCommonCapabilities(),
+		protocol.DaemonCapabilityClaimPollHintsV1,
+	), ",")
+}
+
+// daemonHTTPClientCapabilities omits claim-poll-hints-v1 because HTTP fallback
+// responses cannot drive the healthy-WS scheduler. Advertising it there would
+// make the server run the deferred-task hint query only for the daemon to ignore
+// the result.
+func daemonHTTPClientCapabilities() string {
+	return strings.Join(daemonCommonCapabilities(), ",")
+}
+
+func daemonCommonCapabilities() []string {
+	return []string{
 		protocol.DaemonCapabilitySkillBundlesV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityExecutionManifestV1,
 		protocol.DaemonCapabilityAgentSkillV1,
 		protocol.DaemonCapabilityRemoteMCPV1,
+		protocol.DaemonCapabilityRuntimeMCPSelectionV1,
 		protocol.DaemonCapabilityProjectDesignSystemV1,
 		protocol.DaemonCapabilityLocalWorktreeV1,
 		protocol.DaemonCapabilitySourceContextQuickCreateV1,
 		protocol.DaemonCapabilityRPCV1,
-	}, ",")
+		protocol.DaemonCapabilityTaskRunEvidenceModelUsageV1,
+		protocol.DaemonCapabilityPlatformSkillV1,
+	}
 }
 
 // SetToken sets the auth token for authenticated requests.
@@ -286,6 +311,17 @@ func (c *Client) ResolveRemoteMCPCredential(ctx context.Context, daemonToken, ta
 // comfortably above p99 claim latency so recovery stays the exception.
 const batchClaimRequestTimeout = 5 * time.Second
 
+// claimTasksResult carries optional scheduling metadata understood only by
+// daemons advertising claim-poll-hints-v1. A zero-value result is deliberately
+// conservative: it makes the poller retain PollInterval, which protects new
+// daemons talking to old servers and claims whose WS outcome was uncertain.
+type claimTasksResult struct {
+	Tasks                       []*Task `json:"tasks"`
+	ClaimPollHintSupported      bool    `json:"claim_poll_hint_supported,omitempty"`
+	NextDeferredTaskAfterMillis int64   `json:"next_deferred_task_after_ms,omitempty"`
+	ClaimedOverWS               bool    `json:"-"`
+}
+
 // ClaimTasks is the machine-level (MUL-4257) batch counterpart of ClaimTask:
 // it asks the server, in a single request, to claim up to maxTasks tasks across
 // every runtime the daemon hosts. daemonID scopes the request to this machine —
@@ -297,19 +333,22 @@ const batchClaimRequestTimeout = 5 * time.Second
 // one slow claim cannot stall the whole batch; the deadline propagates to the
 // server and cancels the in-flight query there too.
 func (c *Client) ClaimTasks(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int) ([]*Task, error) {
+	result, err := c.claimTasksWithHints(ctx, daemonID, runtimeIDs, maxTasks)
+	return result.Tasks, err
+}
+
+func (c *Client) claimTasksWithHints(ctx context.Context, daemonID string, runtimeIDs []string, maxTasks int) (claimTasksResult, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, batchClaimRequestTimeout)
 	defer cancel()
-	var resp struct {
-		Tasks []*Task `json:"tasks"`
-	}
+	var resp claimTasksResult
 	if err := c.postJSON(reqCtx, "/api/daemon/tasks/claim", map[string]any{
 		"daemon_id":   daemonID,
 		"runtime_ids": runtimeIDs,
 		"max_tasks":   maxTasks,
 	}, &resp); err != nil {
-		return nil, err
+		return claimTasksResult{}, err
 	}
-	return resp.Tasks, nil
+	return resp, nil
 }
 
 // isBatchClaimUnsupported reports whether err is a 404 from the batch claim
@@ -438,6 +477,19 @@ func (c *Client) ExtendTaskPrepareLease(ctx context.Context, runtimeID, taskID s
 
 func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
+}
+
+func (c *Client) StartTaskWithIssueStart(ctx context.Context, taskID string, report IssueStartReport) (*IssueStartState, error) {
+	var response struct {
+		IssueStart *IssueStartState `json:"issue_start,omitempty"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), report, &response); err != nil {
+		return nil, err
+	}
+	if response.IssueStart == nil {
+		return nil, errors.New("start task: server omitted issue_start result")
+	}
+	return response.IssueStart, nil
 }
 
 func (c *Client) ReportOpenDesignPreflight(ctx context.Context, taskID string, report opendesign.PreflightReport) error {
@@ -834,6 +886,11 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 			if value != nil {
 				body["design_implementation"] = value
 			}
+		case IssueCompletionReport:
+			if value.Intent != nil {
+				body["claim_generation"] = value.ClaimGeneration
+				body["issue_completion"] = value.Intent
+			}
 		case nil:
 		default:
 			return fmt.Errorf("unsupported CompleteTask option type %T", value)
@@ -925,6 +982,7 @@ type (
 	PendingModelList        = protocol.DaemonHeartbeatPendingModelList
 	PendingLocalSkills      = protocol.DaemonHeartbeatPendingLocalSkills
 	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
+	PendingCapabilityScan   = protocol.DaemonHeartbeatPendingCapabilityScan
 )
 
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string) (*HeartbeatResponse, error) {
@@ -951,6 +1009,20 @@ func (c *Client) ReportModelListResult(ctx context.Context, runtimeID, requestID
 // ReportLocalSkillListResult sends the runtime-local-skill inventory back to the server.
 func (c *Client) ReportLocalSkillListResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/%s/result", runtimeID, requestID), result, nil)
+}
+
+// ReportRuntimeCapabilities uploads the probed test-execution capabilities
+// (browsers, devices) for a runtime. The payload carries the optional
+// request_id of the scan that asked for it plus the capability summaries;
+// it never carries secrets (see runtimeCapabilitySummary).
+func (c *Client) ReportRuntimeCapabilities(ctx context.Context, runtimeID string, payload map[string]any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/capabilities", runtimeID), payload, nil)
+}
+
+// ReportTestRunCaseFrame relays the device hub's last frame of a running case
+// so the run page can show it; the server keeps it in memory only.
+func (c *Client) ReportTestRunCaseFrame(ctx context.Context, runtimeID, runCaseID string, payload map[string]any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/test-run-cases/%s/frame", runtimeID, runCaseID), payload, nil)
 }
 
 // ReportLocalSkillImportResult sends a runtime-local-skill bundle back to the server.

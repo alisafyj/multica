@@ -11,6 +11,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countIssueRunCaseResults = `-- name: CountIssueRunCaseResults :many
+SELECT rc.result, count(*)::bigint AS result_count
+FROM test_run_case rc
+JOIN test_case_issue tci ON tci.test_case_id = rc.test_case_id AND tci.workspace_id = rc.workspace_id
+WHERE rc.run_id = $1 AND tci.issue_id = $2 AND rc.workspace_id = $3
+GROUP BY rc.result
+`
+
+type CountIssueRunCaseResultsParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type CountIssueRunCaseResultsRow struct {
+	Result      string `json:"result"`
+	ResultCount int64  `json:"result_count"`
+}
+
+// Results of the covering cases inside one round.
+func (q *Queries) CountIssueRunCaseResults(ctx context.Context, arg CountIssueRunCaseResultsParams) ([]CountIssueRunCaseResultsRow, error) {
+	rows, err := q.db.Query(ctx, countIssueRunCaseResults, arg.RunID, arg.IssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountIssueRunCaseResultsRow{}
+	for rows.Next() {
+		var i CountIssueRunCaseResultsRow
+		if err := rows.Scan(&i.Result, &i.ResultCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createTestCase = `-- name: CreateTestCase :one
 INSERT INTO test_case (
     workspace_id, project_id, case_number, title, module, preconditions,
@@ -259,6 +299,54 @@ func (q *Queries) DeleteTestCaseRevisions(ctx context.Context, arg DeleteTestCas
 	return err
 }
 
+const getLatestTestRunForIssue = `-- name: GetLatestTestRunForIssue :one
+SELECT r.id, r.workspace_id, r.project_id, r.plan_id, r.title, r.executor_type, r.executor_id, r.agent_task_id, r.environment, r.build_ref, r.capability_binding, r.status, r.source_run_id, r.retry_scope, r.error, r.started_at, r.completed_at, r.created_by, r.created_at, r.updated_at, r.parallelism
+FROM test_run r
+WHERE r.workspace_id = $2
+  AND EXISTS (
+    SELECT 1 FROM test_run_case rc
+    JOIN test_case_issue tci ON tci.test_case_id = rc.test_case_id AND tci.workspace_id = rc.workspace_id
+    WHERE rc.run_id = r.id AND tci.issue_id = $1
+  )
+ORDER BY r.created_at DESC
+LIMIT 1
+`
+
+type GetLatestTestRunForIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// The newest round that executed any case covering the issue.
+func (q *Queries) GetLatestTestRunForIssue(ctx context.Context, arg GetLatestTestRunForIssueParams) (TestRun, error) {
+	row := q.db.QueryRow(ctx, getLatestTestRunForIssue, arg.IssueID, arg.WorkspaceID)
+	var i TestRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.PlanID,
+		&i.Title,
+		&i.ExecutorType,
+		&i.ExecutorID,
+		&i.AgentTaskID,
+		&i.Environment,
+		&i.BuildRef,
+		&i.CapabilityBinding,
+		&i.Status,
+		&i.SourceRunID,
+		&i.RetryScope,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Parallelism,
+	)
+	return i, err
+}
+
 const getTestCaseByNumber = `-- name: GetTestCaseByNumber :one
 SELECT id, workspace_id, project_id, case_number, title, module, preconditions, steps, expected_result, test_data, priority, case_type, scope, execution_mode, required_capabilities, business_rules_ref, status, origin, source_refs, generation_job_id, version, created_by, updated_by, reviewed_by, reviewed_at, created_at, updated_at FROM test_case
 WHERE workspace_id = $1 AND case_number = $2
@@ -390,6 +478,72 @@ func (q *Queries) LinkTestCaseIssue(ctx context.Context, arg LinkTestCaseIssuePa
 	return i, err
 }
 
+const listDefectsForIssue = `-- name: ListDefectsForIssue :many
+SELECT i.id AS defect_id, i.number AS defect_number, i.title AS defect_title, i.status AS defect_status,
+       rc.id AS run_case_id, rc.run_id, rc.result, rc.updated_at AS opened_at,
+       COALESCE(rc.case_snapshot->>'key', '')::text AS case_key,
+       r.title AS run_title
+FROM test_case_issue tci
+JOIN test_run_case rc ON rc.test_case_id = tci.test_case_id AND rc.workspace_id = tci.workspace_id
+JOIN issue i ON i.id = rc.defect_issue_id
+JOIN test_run r ON r.id = rc.run_id
+WHERE tci.issue_id = $1 AND tci.workspace_id = $2 AND rc.defect_issue_id IS NOT NULL
+ORDER BY rc.updated_at DESC
+LIMIT 50
+`
+
+type ListDefectsForIssueParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListDefectsForIssueRow struct {
+	DefectID     pgtype.UUID        `json:"defect_id"`
+	DefectNumber int32              `json:"defect_number"`
+	DefectTitle  string             `json:"defect_title"`
+	DefectStatus string             `json:"defect_status"`
+	RunCaseID    pgtype.UUID        `json:"run_case_id"`
+	RunID        pgtype.UUID        `json:"run_id"`
+	Result       string             `json:"result"`
+	OpenedAt     pgtype.Timestamptz `json:"opened_at"`
+	CaseKey      string             `json:"case_key"`
+	RunTitle     string             `json:"run_title"`
+}
+
+// Defects a test round opened while executing a case that covers this issue:
+// the "found by tests" list on a requirement. One row per (defect, run case),
+// newest first; the handler collapses duplicates per defect.
+func (q *Queries) ListDefectsForIssue(ctx context.Context, arg ListDefectsForIssueParams) ([]ListDefectsForIssueRow, error) {
+	rows, err := q.db.Query(ctx, listDefectsForIssue, arg.IssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDefectsForIssueRow{}
+	for rows.Next() {
+		var i ListDefectsForIssueRow
+		if err := rows.Scan(
+			&i.DefectID,
+			&i.DefectNumber,
+			&i.DefectTitle,
+			&i.DefectStatus,
+			&i.RunCaseID,
+			&i.RunID,
+			&i.Result,
+			&i.OpenedAt,
+			&i.CaseKey,
+			&i.RunTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIssuesForTestCase = `-- name: ListIssuesForTestCase :many
 SELECT tci.test_case_id, tci.issue_id, tci.origin, tci.created_at,
        i.number AS issue_number, i.title AS issue_title, i.status AS issue_status,
@@ -436,6 +590,74 @@ func (q *Queries) ListIssuesForTestCase(ctx context.Context, arg ListIssuesForTe
 			&i.IssueTitle,
 			&i.IssueStatus,
 			&i.IssuePriority,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunCasesThatOpenedIssue = `-- name: ListRunCasesThatOpenedIssue :many
+SELECT rc.id AS run_case_id, rc.run_id, rc.result, rc.executed_at, rc.updated_at,
+       COALESCE(rc.case_snapshot->>'key', '')::text AS case_key,
+       COALESCE(rc.case_snapshot->>'title', '')::text AS case_title,
+       rc.test_case_id,
+       r.title AS run_title, r.status AS run_status, r.environment, r.build_ref
+FROM test_run_case rc
+JOIN test_run r ON r.id = rc.run_id
+WHERE rc.defect_issue_id = $1 AND rc.workspace_id = $2
+ORDER BY rc.updated_at DESC
+LIMIT 20
+`
+
+type ListRunCasesThatOpenedIssueParams struct {
+	DefectIssueID pgtype.UUID `json:"defect_issue_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type ListRunCasesThatOpenedIssueRow struct {
+	RunCaseID   pgtype.UUID        `json:"run_case_id"`
+	RunID       pgtype.UUID        `json:"run_id"`
+	Result      string             `json:"result"`
+	ExecutedAt  pgtype.Timestamptz `json:"executed_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	CaseKey     string             `json:"case_key"`
+	CaseTitle   string             `json:"case_title"`
+	TestCaseID  pgtype.UUID        `json:"test_case_id"`
+	RunTitle    string             `json:"run_title"`
+	RunStatus   string             `json:"run_status"`
+	Environment string             `json:"environment"`
+	BuildRef    string             `json:"build_ref"`
+}
+
+// The reverse link of `multica test defect open`: which round and case
+// discovered this issue. Rendered on the defect as "found by run X".
+func (q *Queries) ListRunCasesThatOpenedIssue(ctx context.Context, arg ListRunCasesThatOpenedIssueParams) ([]ListRunCasesThatOpenedIssueRow, error) {
+	rows, err := q.db.Query(ctx, listRunCasesThatOpenedIssue, arg.DefectIssueID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRunCasesThatOpenedIssueRow{}
+	for rows.Next() {
+		var i ListRunCasesThatOpenedIssueRow
+		if err := rows.Scan(
+			&i.RunCaseID,
+			&i.RunID,
+			&i.Result,
+			&i.ExecutedAt,
+			&i.UpdatedAt,
+			&i.CaseKey,
+			&i.CaseTitle,
+			&i.TestCaseID,
+			&i.RunTitle,
+			&i.RunStatus,
+			&i.Environment,
+			&i.BuildRef,
 		); err != nil {
 			return nil, err
 		}
@@ -542,6 +764,61 @@ func (q *Queries) ListTestCaseReposForCases(ctx context.Context, caseIds []pgtyp
 			&i.Role,
 			&i.PathGlobs,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTestCaseReposForProject = `-- name: ListTestCaseReposForProject :many
+SELECT tcr.test_case_id, tcr.workspace_id, tcr.project_resource_id, tcr.alias, tcr.role, tcr.path_globs, tcr.created_at, tc.status AS case_status
+FROM test_case_repo tcr
+JOIN test_case tc ON tc.id = tcr.test_case_id
+WHERE tc.project_id = $1 AND tc.workspace_id = $2 AND tc.status <> 'deprecated'
+ORDER BY tcr.test_case_id, tcr.alias ASC, tcr.role ASC
+`
+
+type ListTestCaseReposForProjectParams struct {
+	ProjectID   pgtype.UUID `json:"project_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+type ListTestCaseReposForProjectRow struct {
+	TestCaseID        pgtype.UUID        `json:"test_case_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Alias             string             `json:"alias"`
+	Role              string             `json:"role"`
+	PathGlobs         []byte             `json:"path_globs"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	CaseStatus        string             `json:"case_status"`
+}
+
+// Every repo binding of a project's live cases, for change-based regression
+// selection: which cases claim the files a commit touched.
+func (q *Queries) ListTestCaseReposForProject(ctx context.Context, arg ListTestCaseReposForProjectParams) ([]ListTestCaseReposForProjectRow, error) {
+	rows, err := q.db.Query(ctx, listTestCaseReposForProject, arg.ProjectID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTestCaseReposForProjectRow{}
+	for rows.Next() {
+		var i ListTestCaseReposForProjectRow
+		if err := rows.Scan(
+			&i.TestCaseID,
+			&i.WorkspaceID,
+			&i.ProjectResourceID,
+			&i.Alias,
+			&i.Role,
+			&i.PathGlobs,
+			&i.CreatedAt,
+			&i.CaseStatus,
 		); err != nil {
 			return nil, err
 		}

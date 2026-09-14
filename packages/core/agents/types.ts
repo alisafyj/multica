@@ -38,7 +38,8 @@
 export type AgentAvailability =
   | "online" // 🟢 runtime online and reachable
   | "unstable" // 🟡 runtime recently_lost (< 5 min) — transient
-  | "offline" // ⚫ runtime long offline / missing / never registered
+  | "unknown" // runtime is bound but its health is not visible to this viewer
+  | "offline" // ⚫ runtime long offline or the agent is actually unbound
   | "archived"; // ⚫ agent.archived_at set — retired, wins over runtime health
 
 // Current task load on this agent. Three states — never historical,

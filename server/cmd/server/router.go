@@ -96,6 +96,7 @@ var corsExposedHeaders = []string{
 	"X-Request-ID",
 	handler.HeaderCommentsTruncated,
 	handler.HeaderTimelineTruncated,
+	handler.HeaderActiveRunsTruncated,
 }
 
 func registerPluginActionRoutes(r chi.Router, h *handler.Handler) {
@@ -518,6 +519,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		if notifier, ok := opts.DaemonWakeup.(handler.DaemonPendingWorkNotifier); ok {
 			h.DaemonPendingWork = notifier
 		}
+		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeGoneNotifier); ok {
+			h.DaemonRuntimeGone = notifier
+		}
 	}
 	if rdb != nil {
 		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
@@ -525,6 +529,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.ModelCatalogCache = handler.NewRedisModelCatalogCache(rdb)
 		h.LocalSkillListStore = handler.NewRedisLocalSkillListStore(rdb)
 		h.LocalSkillImportStore = handler.NewRedisLocalSkillImportStore(rdb)
+		h.CapabilityScanStore = handler.NewRedisCapabilityScanStore(rdb)
+		h.DeviceHubStore = handler.NewRedisDeviceHubStore(rdb)
+		h.LiveFrameStore = handler.NewRedisLiveFrameStore(rdb)
 		h.LivenessStore = handler.NewRedisLivenessStore(rdb)
 		h.WebhookRateLimiter = handler.NewRedisWebhookRateLimiter(rdb, handler.DefaultWebhookRateLimit())
 		h.WebhookIPRateLimiter = handler.NewRedisWebhookIPRateLimiter(rdb, handler.DefaultWebhookIPRateLimit())
@@ -1520,12 +1527,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/claim", h.ClaimTasksByRuntime)
 		r.Post("/claim", h.ClaimTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/prepare-lease", h.ExtendTaskPrepareLease)
+		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/run-evidence", h.ReportTaskRunEvidence)
+		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/pending-inputs", h.RegisterTaskPendingInput)
+		r.Get("/runtimes/{runtimeId}/tasks/{taskId}/pending-inputs/{pendingId}", h.GetTaskPendingInputForDaemon)
+		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/pending-inputs/{pendingId}/ack", h.AckTaskPendingInput)
 		r.Post("/runtimes/{runtimeId}/tasks/{taskId}/skill-bundles/resolve", h.ResolveTaskSkillBundles)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
 		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
+		// Test-execution capability inventory (browsers, devices). Sent
+		// unsolicited after registration and in answer to a pending scan.
+		r.Post("/runtimes/{runtimeId}/capabilities", h.ReportRuntimeCapabilities)
+		// Live frame of a running case, relayed from the device hub (memory only).
+		r.Post("/runtimes/{runtimeId}/test-run-cases/{runCaseId}/frame", h.ReportTestRunCaseFrame)
 
 		r.Get("/tasks/{taskId}/status", h.GetTaskStatus)
 		r.Post("/tasks/{taskId}/start", h.StartTask)
@@ -1554,6 +1570,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/complete", h.CompleteTask)
 		r.Post("/tasks/{taskId}/fail", h.FailTask)
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
+		r.Post("/tasks/{taskId}/execution", h.ReportTaskExecution)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
@@ -1963,6 +1980,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
+				r.With(handler.RequireHumanActor).Get("/{issueId}/pending-inputs", h.ListTaskPendingInputsForIssue)
+				r.With(handler.RequireHumanActor).Post("/{issueId}/pending-inputs/{pendingId}/answer", h.AnswerTaskPendingInput)
 				r.Get("/limit-usage", h.GetIssueLimitUsage)
 				r.Get("/window-usage", h.GetIssueWindowUsage)
 				r.Post("/table/groups", h.ListIssueTableGroups)
@@ -2011,6 +2030,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Test coverage: the cases that claim to verify this issue,
 					// each with its latest recorded outcome.
 					r.Get("/test-cases", h.ListIssueTestCases)
+					// Requirement loop: latest round, verified badge, defects the
+					// covering cases opened, and (for a defect) what found it.
+					r.Get("/test-summary", h.GetIssueTestSummary)
 					r.Get("/metadata", h.ListIssueMetadata)
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
@@ -2022,6 +2044,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/run-evidence", h.ListTaskRunEvidenceByUser)
 			r.With(handler.RequireHumanActor).Post("/api/tasks/{taskId}/retry-source-context", h.RetrySourceContextQuickCreate)
 
 			// Issue quick actions (definitions; running one lives under
@@ -2103,6 +2126,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Literal sub-paths are registered before {ref}, which accepts
 				// either a TC-<n> key or a UUID.
 				r.Get("/modules", h.ListTestCaseModules)
+				// Which cases claim the files a change touched.
+				r.Post("/recommend", h.RecommendTestCases)
 				r.Get("/", h.ListTestCases)
 				r.Post("/", h.CreateTestCase)
 				r.Route("/{ref}", func(r chi.Router) {
@@ -2149,6 +2174,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateTestPlan)
 					r.Delete("/", h.DeleteTestPlan)
 					r.Get("/cases", h.ListTestPlanCases)
+					r.Get("/stats", h.GetTestPlanStats)
 					r.Post("/cases", h.AddTestPlanCases)
 					r.Delete("/cases/{caseId}", h.RemoveTestPlanCase)
 				})
@@ -2171,11 +2197,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Result write and defect creation are per run-case; both are also
 			// reachable by the run's own agent through its task token.
 			r.Put("/api/test-run-cases/{id}/result", h.UpdateTestRunCaseResult)
+			r.Get("/api/test-run-cases/{id}/frame", h.GetTestRunCaseFrame)
 			r.Post("/api/test-run-cases/{id}/defect", h.OpenTestRunCaseDefect)
 
 			// Execution capabilities
 			r.Get("/api/test-capabilities", h.ListTestCapabilities)
 			r.Post("/api/runtimes/{id}/capabilities", h.RequestRuntimeCapabilityScan)
+			r.Get("/api/runtimes/{id}/device-hub", h.GetRuntimeDeviceHub)
 
 			r.Put("/api/design-assets/repository-association", h.SetDesignAssetRepositoryAssociation)
 			r.Get("/api/design-assets/{designRef}/frames", h.GetDesignAssetFrames)
@@ -2563,6 +2591,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// thread (?id for a specific one, else the thread the session is in).
 			r.Get("/api/chat/history", h.GetChatChannelHistory)
 			r.Get("/api/chat/thread", h.GetChatThread)
+			r.Get("/api/chat/prd", h.GetChatPRD)
+			r.Get("/api/chat/prd/template", h.GetChatPRDTemplate)
+			r.Post("/api/chat/prd/draft", h.SaveChatPRDDraft)
+			r.Post("/api/chat/prd/publish", h.PublishChatPRD)
 
 			// Inbox
 			r.Route("/api/inbox", func(r chi.Router) {

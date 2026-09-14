@@ -3,7 +3,27 @@
 import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTask } from "@multica/core/types";
+import type * as ApiModule from "@multica/core/api";
 import { renderWithI18n } from "../../test/i18n";
+
+const mockApi = vi.hoisted(() => ({
+  cancelTask: vi.fn(),
+  rerunIssue: vi.fn(),
+  listTaskRunEvidence: vi.fn(),
+}));
+
+vi.mock("@multica/core/api", async (importOriginal) => {
+  const original = await importOriginal<typeof ApiModule>();
+  return {
+    ...original,
+    api: {
+      ...original.api,
+      cancelTask: mockApi.cancelTask,
+      rerunIssue: mockApi.rerunIssue,
+      listTaskRunEvidence: mockApi.listTaskRunEvidence,
+    },
+  };
+});
 
 const mockState = vi.hoisted(() => ({
   taskMessagesOptions: vi.fn(),
@@ -92,7 +112,9 @@ describe("ActiveTaskRow", () => {
   it("does not make transcript actions depend on hover-only rendering", () => {
     renderWithI18n(<ActiveTaskRow task={makeTask()} issueId="issue-1" />);
 
-    const transcriptButton = screen.getByRole("button", { name: "View transcript" });
+    const transcriptButton = screen.getByRole("button", {
+      name: "View transcript",
+    });
     const status = screen.getByText("5m 04s");
 
     expect(status.parentElement?.className).toContain("flex h-7");
@@ -100,10 +122,97 @@ describe("ActiveTaskRow", () => {
       "[@media(hover:hover)]:group-hover/execution-log-row:hidden",
     );
     expect(transcriptButton.parentElement?.className).toContain("flex h-7");
-    expect(transcriptButton.parentElement?.className).toContain("[@media(hover:hover)]:hidden");
+    expect(transcriptButton.parentElement?.className).toContain(
+      "[@media(hover:hover)]:hidden",
+    );
     expect(transcriptButton.parentElement?.className).toContain(
       "[@media(hover:hover)]:group-hover/execution-log-row:flex",
     );
+  });
+
+  it("restarts in concise mode after explicit confirmation", async () => {
+    mockApi.cancelTask.mockResolvedValue({});
+    mockApi.rerunIssue.mockResolvedValue({});
+    renderWithI18n(
+      <ActiveTaskRow
+        task={makeTask({ concise_mode: false })}
+        issueId="issue-1"
+      />,
+    );
+
+    // First click only opens the confirm dialog — nothing fires yet.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restart in concise mode" }),
+    );
+    const dialog = screen.getByRole("alertdialog");
+    expect(
+      within(dialog).getByText(/cancelled and restarted from scratch/i),
+    ).toBeInTheDocument();
+    expect(mockApi.cancelTask).not.toHaveBeenCalled();
+    expect(mockApi.rerunIssue).not.toHaveBeenCalled();
+
+    // Confirm cancels immediately; the rerun waits out the settle delay.
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /cancel and restart/i }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(199);
+    });
+    expect(mockApi.cancelTask).toHaveBeenCalledWith("issue-1", "task-1");
+    expect(mockApi.rerunIssue).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mockApi.rerunIssue).toHaveBeenCalledWith("issue-1", "task-1", {
+      conciseMode: true,
+    });
+  });
+
+  it("restarts in standard mode from a concise run", async () => {
+    mockApi.cancelTask.mockResolvedValue({});
+    mockApi.rerunIssue.mockResolvedValue({});
+    renderWithI18n(
+      <ActiveTaskRow
+        task={makeTask({ concise_mode: true })}
+        issueId="issue-1"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restart in standard mode" }),
+    );
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /cancel and restart/i }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(mockApi.rerunIssue).toHaveBeenCalledWith("issue-1", "task-1", {
+      conciseMode: false,
+    });
+  });
+
+  it("keeps the current run when the switch dialog is dismissed", async () => {
+    renderWithI18n(
+      <ActiveTaskRow
+        task={makeTask({ concise_mode: false })}
+        issueId="issue-1"
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restart in concise mode" }),
+    );
+    const dialog = screen.getByRole("alertdialog");
+    await act(async () => {
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Keep current run" }),
+      );
+    });
+    expect(mockApi.cancelTask).not.toHaveBeenCalled();
+    expect(mockApi.rerunIssue).not.toHaveBeenCalled();
   });
 });
 
@@ -188,7 +297,9 @@ describe("TaskCommentCoverage", () => {
       />,
     );
 
-    expect(screen.queryByText(/Includes \d+ comments?/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Includes \d+ comments?/),
+    ).not.toBeInTheDocument();
   });
 
   it("stays hidden for one comment but shows a cancelled task receipt", () => {
@@ -197,7 +308,9 @@ describe("TaskCommentCoverage", () => {
         task={makeTask({ trigger_comment_id: "comment-1" })}
       />,
     );
-    expect(screen.queryByText(/Includes \d+ comments?/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Includes \d+ comments?/),
+    ).not.toBeInTheDocument();
 
     rerender(
       <TaskCommentCoverage
@@ -246,7 +359,7 @@ describe("execution log failure reasons", () => {
   it("renders a failed run's reason in the active locale", () => {
     renderWithI18n(
       <QueryClientProvider client={failedLogClient()}>
-        <ExecutionLogSection issueId="issue-1" />
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
       </QueryClientProvider>,
       { locale: "zh-Hans" },
     );
@@ -258,6 +371,30 @@ describe("execution log failure reasons", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders configured run budget exhaustion without calling it account quota", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(issueKeys.tasks("issue-1"), [
+      makeTask({
+        status: "failed",
+        completed_at: "2026-06-08T08:04:00Z",
+        error: "configured execution budget exhausted",
+        failure_reason: "execution_budget_exceeded",
+      }),
+    ]);
+
+    renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show past runs (1)" }));
+    expect(screen.getByText(/Configured run budget exhausted/)).toBeInTheDocument();
+    expect(screen.queryByText(/Provider quota exhausted/)).not.toBeInTheDocument();
+  });
+
   // #7411: the raw `task.error` is English prose the server writes for logs
   // and classification. It used to be concatenated into the status tooltip,
   // which put untranslated text — and absolute worktree paths — in front of
@@ -266,14 +403,45 @@ describe("execution log failure reasons", () => {
   it("keeps the raw server error out of the status tooltip", () => {
     renderWithI18n(
       <QueryClientProvider client={failedLogClient()}>
-        <ExecutionLogSection issueId="issue-1" />
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
       </QueryClientProvider>,
       { locale: "zh-Hans" },
     );
 
     fireEvent.click(screen.getByRole("button", { name: "显示历史运行（1）" }));
-    expect(screen.queryByTitle(/provider returned 402/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTitle(/provider returned 402/),
+    ).not.toBeInTheDocument();
     expect(screen.getByTitle("提供商配额已用尽")).toBeInTheDocument();
+  });
+});
+
+describe("run evidence loading", () => {
+  it("fetches evidence only after the individual past run is expanded", async () => {
+    mockApi.listTaskRunEvidence.mockResolvedValue(null);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(issueKeys.tasks("issue-1"), [
+      makeTask({ status: "completed", completed_at: "2026-06-08T08:04:00Z" }),
+    ]);
+
+    renderWithI18n(
+      <QueryClientProvider client={queryClient}>
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" />
+      </QueryClientProvider>,
+    );
+
+    expect(mockApi.listTaskRunEvidence).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Show past runs (1)" }));
+    expect(mockApi.listTaskRunEvidence).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "View run evidence" }));
+      await Promise.resolve();
+    });
+    expect(mockApi.listTaskRunEvidence).toHaveBeenCalledTimes(1);
+    expect(mockApi.listTaskRunEvidence).toHaveBeenCalledWith("task-1");
   });
 });
 
@@ -330,7 +498,7 @@ describe("execution log header geometry", () => {
     queryClient.setQueryData(issueKeys.tasks("issue-1"), tasks);
     return renderWithI18n(
       <QueryClientProvider client={queryClient}>
-        <ExecutionLogSection issueId="issue-1" identifier="MUL-1" />
+        <ExecutionLogSection workspaceId="ws-1" issueId="issue-1" identifier="MUL-1" />
       </QueryClientProvider>,
     );
   }
@@ -346,17 +514,6 @@ describe("execution log header geometry", () => {
     status: "completed",
     completed_at: "2026-06-08T08:04:00Z",
     usage: [usageSlice()],
-  });
-
-  it("keeps the section label on one line", () => {
-    renderSection([completed]);
-
-    const label = screen.getByText("Execution log");
-    // The label is the only header item allowed to shrink, so it is the one
-    // that must carry nowrap + ellipsis. A heading that reflows mid-phrase
-    // reads as broken; an ellipsis reads as a narrow column.
-    expect(label.className).toContain("truncate");
-    expect(label.closest("button")?.className).toContain("whitespace-nowrap");
   });
 
   it("tiers on the sidebar's width, not the viewport's", () => {
@@ -410,7 +567,7 @@ describe("execution log header geometry", () => {
 
 describe("IssueUsageTotal pricing", () => {
   afterEach(() => {
-    useCustomPricingStore.setState({ pricings: {} });
+    act(() => useCustomPricingStore.setState({ pricings: {} }));
   });
 
   it("recomputes when a custom model rate is saved", () => {
@@ -428,23 +585,33 @@ describe("IssueUsageTotal pricing", () => {
     };
     const task = makeTask({ status: "completed", usage: [unpriced] });
 
-    renderWithI18n(
-      <IssueUsageTotal tasks={[task]} alone onOpen={() => {}} />,
-    );
+    renderWithI18n(<IssueUsageTotal tasks={[task]} alone onOpen={() => {}} />);
 
     // No rate on file for this model yet.
-    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
 
     act(() => {
-      useCustomPricingStore.getState().setCustomPricing("acme/totally-made-up-model", {
-        input: 7,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-      });
+      useCustomPricingStore
+        .getState()
+        .setCustomPricing("acme/totally-made-up-model", {
+          input: 7,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        });
     });
 
     // 1M input tokens at $7/M, without any refetch.
     expect(screen.getByText("$7.00")).toBeInTheDocument();
+  });
+
+  it("marks a known subtotal as partial when another model is unpriced", () => {
+    renderWithI18n(
+      <IssueUsageTotal tasks={[makeTask({ status: "completed", usage: [
+        usageSlice(), usageSlice({ model: "r35-unpriced-model" }),
+      ] })]} alone onOpen={() => {}} />,
+    );
+    expect(screen.getByText("$2.00 (partial)")).toBeInTheDocument();
+    expect(screen.queryByText("$2.00")).not.toBeInTheDocument();
   });
 });

@@ -56,11 +56,11 @@ FOR UPDATE;
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, test_plan_id, test_run_parallelism
 ) VALUES (
     $1, $2, sqlc.narg('description'), $3, $4,
     $5, $6, sqlc.narg('issue_title_template'), sqlc.narg('project_id'),
-    $7, $8
+    $7, $8, sqlc.narg('test_plan_id'), sqlc.narg('test_run_parallelism')
 ) RETURNING *;
 
 -- name: UpdateAutopilot :one
@@ -77,6 +77,8 @@ UPDATE autopilot SET
     execution_mode = COALESCE(sqlc.narg('execution_mode'), execution_mode),
     issue_title_template = sqlc.narg('issue_title_template'),
     project_id = sqlc.narg('project_id'),
+    test_plan_id = sqlc.narg('test_plan_id'),
+    test_run_parallelism = sqlc.narg('test_run_parallelism'),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -168,23 +170,44 @@ ORDER BY created_at ASC;
 SELECT * FROM autopilot_trigger
 WHERE id = $1;
 
+-- name: GetAutopilotTriggerForAutopilot :one
+-- Trigger lookup BOUND to both the autopilot it must belong to AND that
+-- autopilot's workspace. Since MUL-6951 the trigger row decides which human a run
+-- acts as, so an unbound `WHERE id = $1` would let a trigger id from another
+-- autopilot select the principal. The workspace join closes the other half: the
+-- caller's membership check proves the resolved human belongs to the workspace it
+-- passed, not that the AUTOPILOT does, and a member of two workspaces would
+-- satisfy the former while the trigger came from the other tenant. Callers
+-- resolving an authorization principal must use this, not GetAutopilotTrigger.
+SELECT t.* FROM autopilot_trigger t
+JOIN autopilot a ON a.id = t.autopilot_id
+WHERE t.id = $1 AND t.autopilot_id = $2 AND a.workspace_id = $3;
+
 -- name: CreateAutopilotTrigger :one
 INSERT INTO autopilot_trigger (
     autopilot_id, kind, enabled, cron_expression, timezone,
     next_run_at, webhook_token, label, provider, event_filters,
-    published_by_type, published_by_id
+    published_by_type, published_by_id,
+    created_by_type, created_by_id
 ) VALUES (
     $1, $2, $3, sqlc.narg('cron_expression'), sqlc.narg('timezone'),
     sqlc.narg('next_run_at'), sqlc.narg('webhook_token'), sqlc.narg('label'),
     COALESCE(sqlc.narg('provider')::text, 'generic'),
     sqlc.narg('event_filters'),
-    sqlc.narg('published_by_type'), sqlc.narg('published_by_id')
+    sqlc.narg('published_by_type'), sqlc.narg('published_by_id'),
+    sqlc.narg('created_by_type'), sqlc.narg('created_by_id')
 ) RETURNING *;
 
 -- name: SetAutopilotTriggerPublisher :exec
 -- Re-stamp a single trigger's responsible publisher after a substantive edit of
--- THAT trigger (cron / filter / enabled / webhook security). Future runs it fires
--- become accountable to this member (MUL-4302 trigger_owner transfer).
+-- THAT trigger (cron / filter / enabled / webhook security), recording who is now
+-- responsible for its config (MUL-4302).
+--
+-- Since MUL-6951 this changes NOTHING about the runs it fires: they act as, and
+-- are accountable to, the trigger's immutable created_by. An edit must not be able
+-- to re-authorize the automation as the editor (Bohan's ruling), so this statement
+-- deliberately does not touch created_by, and published_by is now a config-audit
+-- column only.
 UPDATE autopilot_trigger
 SET published_by_type = $2, published_by_id = $3, updated_at = now()
 WHERE id = $1;
@@ -410,6 +433,28 @@ UPDATE autopilot_run
 SET status = 'running', task_id = $2
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateAutopilotRunTestRunRunning :one
+-- test_run mode: the run is running once its round is dispatched; task_id
+-- keeps the round's first case task so existing readers see the run as
+-- started.
+UPDATE autopilot_run
+SET status = 'running', test_run_id = $2, task_id = $3
+WHERE id = $1
+RETURNING *;
+
+-- name: SetAutopilotRunTestRun :one
+-- A round that was created but parked (blocked) still belongs to the run.
+UPDATE autopilot_run
+SET test_run_id = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: GetAutopilotRunByTestRun :one
+SELECT * FROM autopilot_run
+WHERE test_run_id = $1
+ORDER BY created_at DESC
+LIMIT 1;
 
 -- name: UpdateAutopilotRunCompleted :one
 -- Quota safety: only use for a run known to have no reservation. Normal

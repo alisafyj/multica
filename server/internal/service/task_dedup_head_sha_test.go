@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -25,10 +24,7 @@ import (
 func newHeadShaDedupPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
-	}
+	dbURL := testDatabaseURL(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

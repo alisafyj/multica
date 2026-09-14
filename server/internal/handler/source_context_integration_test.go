@@ -734,12 +734,50 @@ func TestCommentSourceContextLifecycle(t *testing.T) {
 	if _, err := cleanupTx.Exec(ctx, `LOCK TABLE issue_source_context_object_intent IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		t.Fatalf("lock target intent table: %v", err)
 	}
+	noiseContextID := uuid.NewString()
 	if _, err := cleanupTx.Exec(ctx, `
+		INSERT INTO issue_source_context_object_intent
+			(storage_key, workspace_id, source_context_id, attachment_id, object_url, created_at, next_attempt_at)
+		SELECT '000-test-noise/' || $1::text || '/' || n, $2::uuid, $1::uuid, gen_random_uuid(),
+			'https://objects.example/test-noise', now() - interval '2 hours', '-infinity'::timestamptz
+		FROM generate_series(1, 10) AS n
+	`, noiseContextID, testWorkspaceID); err != nil {
+		t.Fatalf("seed unrelated due intents: %v", err)
+	}
+	// Keep old due rows out of this bounded batch, then restore them before commit.
+	if _, err := cleanupTx.Exec(ctx, `
+		CREATE TEMP TABLE source_context_test_parked_intents ON COMMIT DROP AS
+		SELECT storage_key, next_attempt_at FROM issue_source_context_object_intent
+		WHERE source_context_id <> $1 AND next_attempt_at <= now()
+	`, contextID); err != nil {
+		t.Fatalf("snapshot unrelated due intents: %v", err)
+	}
+	if _, err := cleanupTx.Exec(ctx, `
+		UPDATE issue_source_context_object_intent AS intent
+		SET next_attempt_at = 'infinity'::timestamptz
+		FROM source_context_test_parked_intents AS parked
+		WHERE intent.storage_key = parked.storage_key
+	`); err != nil {
+		t.Fatalf("park unrelated due intents: %v", err)
+	}
+	aged, err := cleanupTx.Exec(ctx, `
 		UPDATE issue_source_context_object_intent
 		SET created_at = now() - interval '2 hours', next_attempt_at = '-infinity'::timestamptz
 		WHERE source_context_id = $1
-	`, contextID); err != nil {
-		t.Fatalf("age target delete intents: %v", err)
+	`, contextID)
+	if err != nil || aged.RowsAffected() != 3 {
+		t.Fatalf("age target delete intents: rows=%d err=%v", aged.RowsAffected(), err)
+	}
+	var targetEligible, otherEligible int
+	if err := cleanupTx.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE source_context_id = $1), count(*) FILTER (WHERE source_context_id <> $1)
+		FROM issue_source_context_object_intent
+		WHERE next_attempt_at <= now() AND (
+			(state = 'pending' AND created_at <= now() - interval '1 hour') OR
+			(state = 'deleting' AND (lease_expires_at IS NULL OR lease_expires_at <= now()))
+		)
+	`, contextID).Scan(&targetEligible, &otherEligible); err != nil || targetEligible != 3 || otherEligible != 0 {
+		t.Fatalf("intent batch eligibility: target=%d other=%d err=%v", targetEligible, otherEligible, err)
 	}
 	originalObjectStore := testHandler.TaskService.SourceContextStorage
 	originalQueries := testHandler.TaskService.Queries
@@ -750,6 +788,26 @@ func TestCommentSourceContextLifecycle(t *testing.T) {
 	testHandler.TaskService.Queries = originalQueries
 	if err != nil || cleaned < 3 {
 		t.Fatalf("cleanup target delete intents = %d, err=%v", cleaned, err)
+	}
+	if _, err := cleanupTx.Exec(ctx, `
+		UPDATE issue_source_context_object_intent AS intent
+		SET next_attempt_at = parked.next_attempt_at
+		FROM source_context_test_parked_intents AS parked
+		WHERE intent.storage_key = parked.storage_key
+	`); err != nil {
+		t.Fatalf("restore unrelated due intents: %v", err)
+	}
+	var unrestored int
+	if err := cleanupTx.QueryRow(ctx, `
+		SELECT count(*) FROM source_context_test_parked_intents AS parked
+		LEFT JOIN issue_source_context_object_intent AS intent USING (storage_key)
+		WHERE intent.storage_key IS NULL OR intent.next_attempt_at IS DISTINCT FROM parked.next_attempt_at
+	`).Scan(&unrestored); err != nil || unrestored != 0 {
+		t.Fatalf("unrelated due intents changed: count=%d err=%v", unrestored, err)
+	}
+	removed, err := cleanupTx.Exec(ctx, `DELETE FROM issue_source_context_object_intent WHERE source_context_id = $1`, noiseContextID)
+	if err != nil || removed.RowsAffected() != 10 {
+		t.Fatalf("remove synthetic noise intents: rows=%d err=%v", removed.RowsAffected(), err)
 	}
 	if err := cleanupTx.Commit(ctx); err != nil {
 		t.Fatalf("commit isolated target intent cleanup: %v", err)

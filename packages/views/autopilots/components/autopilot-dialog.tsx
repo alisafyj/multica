@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   FilePlus2,
+  FlaskConical,
   FolderKanban,
   Maximize2,
   Minimize2,
@@ -36,10 +37,13 @@ import {
   PopoverDescription,
 } from "@multica/ui/components/ui/popover";
 import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
+import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
+import { testPlanListOptions } from "@multica/core/testing";
 import {
   useCreateAutopilot,
   useCreateAutopilotTrigger,
@@ -84,6 +88,8 @@ export interface AutopilotInitial {
   assignee_type: AutopilotAssigneeType;
   assignee_id: string;
   execution_mode: AutopilotExecutionMode;
+  test_plan_id?: string | null;
+  test_run_parallelism?: number | null;
   subscriber_user_ids?: string[];
 }
 
@@ -110,11 +116,12 @@ export type AutopilotDialogProps =
 // Static schema-level data (not user-visible)
 // ---------------------------------------------------------------------------
 
-const OUTPUT_MODE_KEYS: AutopilotExecutionMode[] = ["create_issue", "run_only"];
+const OUTPUT_MODE_KEYS: AutopilotExecutionMode[] = ["create_issue", "run_only", "test_run"];
 
 const OUTPUT_MODE_ICONS: Record<AutopilotExecutionMode, typeof FilePlus2> = {
   create_issue: FilePlus2,
   run_only: Play,
+  test_run: FlaskConical,
 };
 
 // ---------------------------------------------------------------------------
@@ -163,6 +170,21 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   const [subscriberUserIds, setSubscriberUserIds] = useState<string[]>(
     initial.subscriber_user_ids ?? [],
   );
+  // test_run mode: the plan each run builds its round from, and the round's
+  // parallelism cap kept as typed so a half-edited number does not snap.
+  const [testPlanId, setTestPlanId] = useState<string | null>(initial.test_plan_id ?? null);
+  const [testRunParallelism, setTestRunParallelism] = useState<string>(
+    initial.test_run_parallelism ? String(initial.test_run_parallelism) : "",
+  );
+  const parsedParallelism = Number.parseInt(testRunParallelism, 10);
+  const testRunFields =
+    executionMode === "test_run"
+      ? {
+          test_plan_id: testPlanId,
+          test_run_parallelism:
+            Number.isFinite(parsedParallelism) && parsedParallelism > 0 ? parsedParallelism : null,
+        }
+      : { test_plan_id: null, test_run_parallelism: null };
 
   // The schedule panel speaks for the autopilot's SCHEDULE trigger, not for
   // `triggers[0]` — on a webhook- or api-triggered autopilot that row is one no
@@ -305,6 +327,13 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
       else assigneeTriggerRef.current?.focus();
       return;
     }
+    if (executionMode === "test_run" && !testPlanId) {
+      // The server refuses a test_run autopilot without a plan; say so where
+      // the plan is picked instead of bouncing the whole form.
+      setShowErrors(true);
+      toast.error(t(($) => $.dialog.test_plan_required));
+      return;
+    }
     setSubmitting(true);
     try {
       if (scheduleWillBeWritten && !(await scheduleGate.ensureAccepted(schedule))) {
@@ -319,6 +348,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
           assignee_type: assigneeType,
           assignee_id: assigneeId,
           execution_mode: executionMode,
+          ...testRunFields,
           subscribers: subscriberUserIds.map((user_id) => ({
             user_type: "member" as const,
             user_id,
@@ -372,6 +402,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
           assignee_type: assigneeType,
           assignee_id: assigneeId,
           execution_mode: executionMode,
+          ...testRunFields,
           subscribers: subscriberUserIds.map((user_id) => ({
             user_type: "member" as const,
             user_id,
@@ -620,6 +651,17 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             />
 
             <OutputModeSection mode={executionMode} onChange={setExecutionMode} />
+
+            {executionMode === "test_run" && (
+              <TestPlanSection
+                projectId={projectId}
+                planId={testPlanId}
+                parallelism={testRunParallelism}
+                invalid={showErrors && !testPlanId}
+                onPlanChange={setTestPlanId}
+                onParallelismChange={setTestRunParallelism}
+              />
+            )}
 
             {/* Shown for BOTH output modes (MUL-6681). The project is not only
                 issue routing: for a run_only autopilot it is the ONLY source of
@@ -1110,5 +1152,70 @@ function WebhookCreatedPanel({
         </Button>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Test plan (test_run mode)
+// ---------------------------------------------------------------------------
+
+function TestPlanSection({
+  projectId,
+  planId,
+  parallelism,
+  invalid,
+  onPlanChange,
+  onParallelismChange,
+}: {
+  projectId: string | null;
+  planId: string | null;
+  parallelism: string;
+  invalid: boolean;
+  onPlanChange: (planId: string | null) => void;
+  onParallelismChange: (value: string) => void;
+}) {
+  const { t } = useT("autopilots");
+  const wsId = useWorkspaceId();
+  // Plans are project-scoped; with no project chosen every plan of the
+  // workspace is offered and the server adopts the plan's project on save.
+  const { data: plans = [] } = useQuery(
+    testPlanListOptions(wsId, projectId ? { projectId } : {}),
+  );
+  const parallelismId = useId();
+  return (
+    <div>
+      <SectionLabel required>{t(($) => $.dialog.section_test_plan)}</SectionLabel>
+      {plans.length === 0 ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.dialog.no_test_plans)}</p>
+      ) : (
+        <NativeSelect
+          aria-label={t(($) => $.dialog.section_test_plan)}
+          aria-invalid={invalid || undefined}
+          value={planId ?? ""}
+          onChange={(event) => onPlanChange(event.target.value.length > 0 ? event.target.value : null)}
+        >
+          <option value="">{t(($) => $.dialog.test_plan_placeholder)}</option>
+          {plans.map((plan) => (
+            <option key={plan.id} value={plan.id}>
+              {plan.title}
+            </option>
+          ))}
+        </NativeSelect>
+      )}
+      {invalid ? (
+        <p className="mt-1 text-caption text-destructive">{t(($) => $.dialog.test_plan_required)}</p>
+      ) : null}
+      <label htmlFor={parallelismId} className="mt-3 block text-caption text-muted-foreground">
+        {t(($) => $.dialog.test_run_parallelism)}
+      </label>
+      <Input
+        id={parallelismId}
+        type="number"
+        min={1}
+        value={parallelism}
+        placeholder={t(($) => $.dialog.test_run_parallelism_hint)}
+        onChange={(event) => onParallelismChange(event.target.value)}
+      />
+    </div>
   );
 }

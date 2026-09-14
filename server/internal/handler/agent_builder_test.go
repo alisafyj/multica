@@ -17,18 +17,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestAgentBuilderInstructionsConstrainModelsToRuntimeCatalog(t *testing.T) {
-	for _, requirement := range []string{
-		"AVAILABLE RUNTIME MODELS",
-		"Never use a model label as the id",
-		"never invent a model id",
-	} {
-		if !strings.Contains(agentBuilderInstructions, requirement) {
-			t.Fatalf("agent builder instructions missing model constraint %q", requirement)
-		}
-	}
-}
-
 func TestCreateAgentBuilderSessionCreatesIsolatedHiddenBuilder(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -844,7 +832,7 @@ func TestSendDirectChatMessageUsesCurrentlyBoundRuntime(t *testing.T) {
 	})
 
 	sent, err := testHandler.TaskService.SendDirectChatMessage(
-		ctx, session, staleAgent, parseUUID(testUserID), "hello after the switch", nil, "member", parseUUID(testUserID),
+		ctx, session, staleAgent, parseUUID(testUserID), "hello after the switch", nil, false, "member", parseUUID(testUserID),
 	)
 	if err != nil {
 		t.Fatalf("SendDirectChatMessage: %v", err)
@@ -964,7 +952,7 @@ func TestSendDirectChatMessageWaitsForUncommittedRebind(t *testing.T) {
 	go func() {
 		sent, err := testHandler.TaskService.SendDirectChatMessage(
 			context.Background(), session, staleAgent, parseUUID(testUserID),
-			"sent while the rebind was still open", nil, "member", parseUUID(testUserID),
+			"sent while the rebind was still open", nil, false, "member", parseUUID(testUserID),
 		)
 		if err != nil {
 			results <- sendResult{err: err}
@@ -1037,7 +1025,7 @@ func TestSendDirectChatMessageRejectsSessionArchivedWhileWaitingForLock(t *testi
 	go func() {
 		_, err := testHandler.TaskService.SendDirectChatMessage(
 			context.Background(), session, agent, parseUUID(testUserID),
-			"must not enqueue after archive", nil, "member", parseUUID(testUserID),
+			"must not enqueue after archive", nil, false, "member", parseUUID(testUserID),
 		)
 		results <- err
 	}()

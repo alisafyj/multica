@@ -118,6 +118,23 @@
     "crossRepoNeedsRepos": "A cross-repo case needs at least two repositories",
     "crossRepoNeedsRoles": "A cross-repo case needs more than one repository role"
   },
+  "capabilities": {
+    "title": "Required capabilities",
+    "empty": "This case needs no browser or device.",
+    "add": "Add capability",
+    "remove": "Remove this capability",
+    "kind": "Kind",
+    "match": "Match",
+    "matchPlaceholder": "os_version=>=13, browser=chromium",
+    "optional": "Optional — a missing kind does not block the run",
+    "hint": "A kind declared here is bound to a real browser or device at dispatch. A round whose runtime cannot provide it is parked as blocked.",
+    "kinds": {
+      "browser": "Browser",
+      "android_device": "Android device",
+      "ios_device": "iOS device",
+      "computer_use": "Computer use"
+    }
+  },
   "role": {
     "under_test": "Under test",
     "driver": "Driver",
@@ -330,7 +347,15 @@
       "description": "Description",
       "deletePlan": "Delete plan",
       "confirmDelete": "Delete this test plan?",
-      "unknownCase": "Case no longer exists"
+      "unknownCase": "Case no longer exists",
+      "parallelism": "Parallelism",
+      "parallelismPlaceholder": "all at once",
+      "board": "Board",
+      "boardEmpty": "No rounds yet",
+      "passRate": "Pass rate",
+      "matrixTitle": "Modules in the latest round",
+      "moduleColumn": "Module",
+      "moduleUnnamed": "(no module)"
     }
   },
   "run": {
@@ -350,7 +375,8 @@
       "plan": "Plan",
       "executor": "Executor",
       "started": "Started",
-      "completed": "Completed"
+      "completed": "Completed",
+      "parallelism": "Parallelism"
     },
     "counts": {
       "passed": "Passed",
@@ -404,7 +430,10 @@
       "defect": "Defect"
     },
     "saveNotes": "Save notes",
-    "notesNeedResult": "Notes are saved with a result — pick one first."
+    "notesNeedResult": "Notes are saved with a result — pick one first.",
+    "task": "task {{id}}",
+    "liveFrame": "Live screen",
+    "liveFrameWaiting": "Waiting for the first frame from the device hub…"
   },
   "timeline": {
     "title": "Run History",
@@ -413,7 +442,9 @@
     "result": "Result",
     "environment": "Environment",
     "buildRef": "Build",
-    "executedAt": "Executed"
+    "executedAt": "Executed",
+    "flaky": "Unstable",
+    "flakyHint": "Results flipped between pass and fail within the last {{count}} runs"
   },
   "runs": {
     "title": "Test runs",
@@ -451,6 +482,23 @@
     "newPlan": "New plan…",
     "confirm": "Add"
   },
+  "recommend": {
+    "action": "Recommend by change",
+    "title": "Cases for a change",
+    "description": "Paste the changed paths, one per line. Cases whose repo bindings claim them are listed, most-claimed first.",
+    "paths": "Changed paths",
+    "pathsPlaceholder": "src/order/checkout.ts\napps/web/app/orders/page.tsx",
+    "repo": "Repository alias (optional)",
+    "find": "Find cases",
+    "finding": "Finding…",
+    "empty": "No case claims these paths. Add path globs to the cases' repo bindings.",
+    "claimed": "{{count}} paths claimed",
+    "unmatched": "{{count}} paths claimed by no case",
+    "select": "Select in list",
+    "startRun": "Start run",
+    "runTitle": "Regression for {{count}} changed paths",
+    "runFailed": "Could not start the run"
+  },
   "coverage": {
     "caseSection": "Covers",
     "caseEmpty": "Not linked to any issue yet",
@@ -464,6 +512,17 @@
     "pickerDescription": "Pick the requirement this case verifies.",
     "neverRun": "Not run",
     "failingCount": "{{count}} failing",
-    "untestedCount": "{{count}} not run"
+    "untestedCount": "{{count}} not run",
+    "verified": "Verified",
+    "verifiedHint": "Every covering case passed in its latest run",
+    "latestRun": "Latest round",
+    "defectsSection": "Defects found by tests",
+    "foundBySection": "Found by test run",
+    "generateCases": "Generate cases",
+    "newCase": "New case",
+    "newCaseTitle": "Verify: {{title}}",
+    "noCoverage": "No test coverage yet",
+    "generateFailed": "Could not start case generation",
+    "newCaseFailed": "Could not create the case"
   }
 }

@@ -406,6 +406,33 @@ var legacyOpenclawCLITimeoutReasons = map[string]bool{
 	"agent_error":                      true,
 }
 
+// legacyToolBudgetWitness is the substring of
+// server/pkg/agent.ErrToolBudgetExceeded ("agent tool-call budget exceeded")
+// that every participating backend's wrapper preserves verbatim — pi, omp,
+// codex, grok and openclaw all format it as
+// "<label>: agent tool-call budget exceeded (cap N)". The label prefix varies
+// by backend, so the witness is a contains-match rather than a prefix.
+const legacyToolBudgetWitness = "tool-call budget exceeded"
+
+// legacyToolBudgetReasons are the buckets a daemon predating
+// ReasonToolBudgetExceeded lands a budget stop in: the catchall from its own
+// text classifier (taskRunFailureReason → Classify has no rule for the
+// phrase), and the pre-MUL-1949 coarse agent_error.
+var legacyToolBudgetReasons = map[string]bool{
+	string(ReasonAgentUnknown): true,
+	"agent_error":             true,
+}
+
+// legacyEnvironmentPrepareWitnesses are the two wrappers the daemon puts on a
+// failed execenv.Prepare / execenv.Reuse. Each opens the error at character
+// zero, and no other code path emits them, so the prefix alone establishes
+// that the run died setting up its workspace directory and never reached an
+// agent.
+var legacyEnvironmentPrepareWitnesses = []string{
+	"prepare execution environment:",
+	"reuse execution environment:",
+}
+
 func isPiProviderNetworkError(lower string) bool {
 	for _, message := range []string{"connection error.", "request timed out."} {
 		if lower == message ||
@@ -497,6 +524,36 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 		containsAll(strings.ToLower(rawError), legacyOpenclawCLITimeoutWitnesses...) {
 		return ReasonRuntimeCLITimeout
 	}
+	// #7913: the same mixed-version gap on environment preparation. A daemon
+	// predating the structural tag classifies the host's own filesystem error
+	// from its text and reports some agent_error.* value — the catchall today,
+	// provider_server_error on the report that opened the issue. Every one of
+	// them is wrong by construction: the prefix proves the task died before an
+	// agent process existed, so the whole agent_error.* namespace is upgraded
+	// here rather than an enumerated subset of it.
+	//
+	// Last, so the openclaw rule above keeps its own preparation failure: that
+	// one names a specific cause inside this same phase and says strictly more.
+	if isAgentSideReason(reason) && hasAnyPrefix(lowerError, legacyEnvironmentPrepareWitnesses...) {
+		return ReasonEnvironmentPrepareFailed
+	}
+
+	// Tool-call budget exhaustion (concise mode). The witness is
+	// server/pkg/agent.ErrToolBudgetExceeded's text, wrapped by each
+	// participating backend as "<label>: agent tool-call budget exceeded
+	// (cap N)". A daemon that predates ReasonToolBudgetExceeded reports the
+	// catchall (its taskRunFailureReason → Classify has no rule for the
+	// phrase), which hides the one failure whose remedy is not "inspect the
+	// agent" but "click retry and continue": the session is intact and a
+	// rerun resumes it with a fresh budget. Upgrading here retires the
+	// mislabel the moment the server deploys, un-upgraded desktop daemons
+	// included. Narrower than the environment-prepare rule above on purpose:
+	// only the buckets this exact text is known to land in, so a refined
+	// reason an older daemon did match stays untouched.
+	if legacyToolBudgetReasons[reason] &&
+		strings.Contains(lowerError, legacyToolBudgetWitness) {
+		return ReasonToolBudgetExceeded
+	}
 	return Reason(reason)
 }
 
@@ -511,6 +568,28 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return len(subs) > 0
+}
+
+// hasAnyPrefix reports whether s starts with any of the supplied prefixes.
+// Used where the witness is the wrapper opening an error rather than a phrase
+// somewhere inside it, which is what makes it unambiguous. Caller
+// pre-lowercases s, same contract as containsAny.
+func hasAnyPrefix(s string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAgentSideReason reports whether a wire value blames the agent process —
+// any refined agent_error.* sub-reason, or the pre-MUL-1949 coarse bucket they
+// were split out of. Used by normalization rules whose witness proves the run
+// never reached an agent, so that every such label is known to be wrong
+// without enumerating them.
+func isAgentSideReason(reason string) bool {
+	return Reason(reason).IsAgentError() || reason == "agent_error"
 }
 
 // containsAny reports whether s contains any of the supplied substrings.

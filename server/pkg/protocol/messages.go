@@ -34,6 +34,24 @@ const (
 	// Gated so only daemons+servers that both support it route claim over WS;
 	// everyone else keeps using the HTTP claim endpoint.
 	DaemonCapabilityRPCV1 = "rpc-v1"
+	// DaemonCapabilityClaimPollHintsV1 advertises that the daemon understands
+	// the batch-claim response's safety-poll metadata. The server only performs
+	// the extra deferred-task lookup for clients that opt in, and an older
+	// server's missing fields make a newer daemon retain its short fallback.
+	DaemonCapabilityClaimPollHintsV1 = "claim-poll-hints-v1"
+
+	// DaemonCapabilityPlatformSkillV1 advertises that the daemon's runtime
+	// brief names the merged `multica-platform` skill instead of the
+	// per-domain built-ins it replaced (MUL-6986).
+	//
+	// The brief is assembled by the daemon, so a backend upgrade does not
+	// rewrite it: a daemon released before that merge still tells the agent to
+	// "read the `multica-working-on-issues` skill", a name this server no
+	// longer ships. Without this gate the pointer dangles and the agent is left
+	// hunting for a skill that is not installed. When it is absent the server
+	// ships a redirect stub under the old name; when it is present it ships
+	// nothing extra, so the stub retires itself as daemons update.
+	DaemonCapabilityPlatformSkillV1 = "platform-skill-v1"
 
 	// AppCapabilityChatDraftRestoreV1 is advertised (X-Client-Capabilities) by
 	// app clients that understand the durable draft-restore recovery path:
@@ -365,13 +383,17 @@ type DaemonHeartbeatRequestPayload struct {
 // and re-registers; without it the dead UUID would keep heartbeating until the
 // daemon process restarts.
 type DaemonHeartbeatAckPayload struct {
-	RuntimeID               string                                  `json:"runtime_id"`
-	Status                  string                                  `json:"status"`
-	ServerCapabilities      []string                                `json:"server_capabilities,omitempty"`
-	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
-	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
-	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
-	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
+	RuntimeID          string                             `json:"runtime_id"`
+	Status             string                             `json:"status"`
+	ServerCapabilities []string                           `json:"server_capabilities,omitempty"`
+	RuntimeGone        bool                               `json:"runtime_gone,omitempty"`
+	PendingUpdate      *DaemonHeartbeatPendingUpdate      `json:"pending_update,omitempty"`
+	PendingModelList   *DaemonHeartbeatPendingModelList   `json:"pending_model_list,omitempty"`
+	PendingLocalSkills *DaemonHeartbeatPendingLocalSkills `json:"pending_local_skills,omitempty"`
+	// PendingCapabilityScan asks the daemon to probe its host for test
+	// execution capabilities (browsers, devices) and report them. Old daemons
+	// ignore the field; the request then times out server-side.
+	PendingCapabilityScan   *DaemonHeartbeatPendingCapabilityScan   `json:"pending_capability_scan,omitempty"`
 	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
 	// PendingLocalSkillImports carries multiple import requests in a single
 	// heartbeat so the daemon can process them concurrently. Old daemons
@@ -400,6 +422,12 @@ type DaemonHeartbeatPendingModelList struct {
 // DaemonHeartbeatPendingLocalSkills describes a request for the runtime's
 // local-skill inventory.
 type DaemonHeartbeatPendingLocalSkills struct {
+	ID string `json:"id"`
+}
+
+// DaemonHeartbeatPendingCapabilityScan describes a request for the runtime's
+// test-execution capability inventory.
+type DaemonHeartbeatPendingCapabilityScan struct {
 	ID string `json:"id"`
 }
 

@@ -804,6 +804,10 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 type SendChatMessageRequest struct {
 	Content       string   `json:"content"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	// ConciseMode opts this turn's queued task into concise execution (SY-326).
+	// Omitted/false keeps the standard workflow prompt, matching the
+	// quick-create / rerun request conventions.
+	ConciseMode bool `json:"concise_mode,omitempty"`
 }
 
 type SendChatMessageResponse struct {
@@ -942,7 +946,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// creator-only), so they are the task initiator — surfaced to the agent
 	// under `## Task Initiator`. actorType/actorID were resolved above for the
 	// invoke gate.
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID))
+	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, req.ConciseMode, actorType, parseUUID(actorID))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatSessionArchived):

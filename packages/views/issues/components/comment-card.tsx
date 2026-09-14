@@ -36,7 +36,7 @@ import { api, dispatchReasonCode, errorCode } from "@multica/core/api";
 import { ReplyInput } from "./reply-input";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
-import type { Agent, CommentDesignRequest, Issue, TimelineEntry, Attachment } from "@multica/core/types";
+import type { Agent, CommentDesignRequest, Issue, TimelineEntry, Attachment, PendingInput, PendingInputAnswer } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { selectStandaloneAttachments } from "@multica/core/attachments/image-sequence";
 import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
@@ -45,6 +45,7 @@ import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
 import { RevisionConflictCompare } from "./revision-conflict-compare";
 import { CommentDesignDeliveryCard } from "./comment-design-delivery-card";
+import { PendingInputForm } from "./pending-input-form";
 
 const highlightedCommentBackgroundClass =
   "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
@@ -110,7 +111,7 @@ interface CommentCardProps {
    * `CommentRow` has to rerun the rule per row.
    */
   canModerate?: boolean;
-  onReply: (parentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[], designRequest?: CommentDesignRequest) => Promise<string | boolean>;
+  onReply: (parentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[], designRequest?: CommentDesignRequest | boolean, conciseMode?: boolean) => Promise<string | boolean>;
   onReplyAccepted?: (commentId: string) => void;
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[], contentBase?: string) => Promise<void>;
   onDelete: (commentId: string) => void;
@@ -133,6 +134,11 @@ interface CommentCardProps {
   onResolvedExpandChange?: (rootId: string, expand: boolean) => void;
   /** ID of the comment to highlight (flash animation). */
   highlightedCommentId?: string | null;
+  pendingInput?: PendingInput;
+  onAnswerPendingInput?: (
+    pendingInputId: string,
+    answers: Record<string, PendingInputAnswer>,
+  ) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -640,9 +646,18 @@ function CommentRow({
         highlighted={isHighlighted}
         className="flex items-center gap-2.5 px-4 max-md:px-3 pt-1 pb-1.5"
       >
-        <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="md" enableHoverCard showStatusDot />
+        <ActorAvatar
+          actorType={entry.actor_type}
+          actorId={entry.actor_id}
+          name={entry.actor_name}
+          avatarUrl={entry.actor_avatar_url}
+          profileRequiresDirectoryEntry
+          size="md"
+          enableHoverCard
+          showStatusDot
+        />
         <span className="cursor-pointer text-body font-medium">
-          {getActorName(entry.actor_type, entry.actor_id)}
+          {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
         </span>
         <Tooltip>
           <TooltipTrigger
@@ -871,6 +886,8 @@ function CommentCardImpl({
   expandedResolvedIds,
   onResolvedExpandChange,
   highlightedCommentId,
+  pendingInput,
+  onAnswerPendingInput,
 }: CommentCardProps) {
   const { t } = useT("issues");
   const locale = useLocale();
@@ -966,9 +983,18 @@ function CommentCardImpl({
               >
                 <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
               </button>
-              <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="md" enableHoverCard showStatusDot />
+              <ActorAvatar
+                actorType={entry.actor_type}
+                actorId={entry.actor_id}
+                name={entry.actor_name}
+                avatarUrl={entry.actor_avatar_url}
+                profileRequiresDirectoryEntry
+                size="md"
+                enableHoverCard
+                showStatusDot
+              />
               <span className="shrink-0 cursor-pointer text-body font-medium">
-                {getActorName(entry.actor_type, entry.actor_id)}
+                {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
               </span>
               <Tooltip>
                 <TooltipTrigger
@@ -1163,6 +1189,13 @@ function CommentCardImpl({
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10 max-md:pl-0" />
                 {entry.design_delivery ? <div className="pl-10 max-md:pl-0"><CommentDesignDeliveryCard issueId={issueId} delivery={entry.design_delivery} /></div> : null}
+                {pendingInput && onAnswerPendingInput && (
+                  <PendingInputForm
+                    key={pendingInput.id}
+                    pendingInput={pendingInput}
+                    onAnswer={(answers) => onAnswerPendingInput(pendingInput.id, answers)}
+                  />
+                )}
                 {retryableAgentFailureComment(entry) && (
                   <TaskCommentRetryButton
                     issueId={issueId}
@@ -1275,7 +1308,7 @@ function CommentCardImpl({
                   avatarType="member"
                   avatarId={currentUserId ?? ""}
                   draftKey={`reply:${issueId}:${entry.id}`}
-                  onSubmit={(content, attachmentIds, suppressAgentIds, designRequest) => onReply(entry.id, content, attachmentIds, suppressAgentIds, designRequest)}
+                  onSubmit={(content, attachmentIds, suppressAgentIds, designRequest, conciseMode) => onReply(entry.id, content, attachmentIds, suppressAgentIds, designRequest, conciseMode)}
                   onAccepted={onReplyAccepted}
                 />
               </div>

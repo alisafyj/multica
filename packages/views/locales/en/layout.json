@@ -40,7 +40,7 @@
     "feishu_group": "Feishu group",
     "feedback": "Feedback",
     "check_for_updates": "Check for updates",
-    "update_ready": "Update {{version}} is ready to download",
+    "update_ready": "Update {{version}} found — downloading in the background",
     "up_to_date": "You're up to date",
     "server_version": "Server version {{version}}",
     "upstream_base_version": "Community base version {{version}}"
@@ -61,8 +61,10 @@
     "new_issue": "New Issue",
     "new_issue_shortcut": "C",
     "pinned_label": "Pinned",
-    "workspace_group": "Workspace",
-    "configure_group": "Configure",
-    "unread_overflow": "99+"
+    "unread_overflow": "99+",
+    "work_group": "Work",
+    "ai_team_group": "AI team",
+    "show_more_pins": "Show {{count}} more…",
+    "show_fewer_pins": "Show fewer"
   }
 }

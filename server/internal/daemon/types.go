@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"github.com/multica-ai/multica/server/internal/designdocument"
@@ -8,8 +9,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/designpreview"
 	"github.com/multica-ai/multica/server/internal/projectdesignsystem"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
+
+func testingContextPresent(raw json.RawMessage) bool {
+	value := bytes.TrimSpace(raw)
+	return len(value) > 0 && !bytes.Equal(value, []byte("null"))
+}
 
 // AgentEntry describes a single available agent CLI.
 type AgentEntry struct {
@@ -85,14 +92,22 @@ type IssueStatusData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
-	ID                   string                 `json:"id"`
-	AgentID              string                 `json:"agent_id"`
-	RuntimeID            string                 `json:"runtime_id"`
-	IssueID              string                 `json:"issue_id"`
-	WorkspaceID          string                 `json:"workspace_id"`
-	WorkspaceSlug        string                 `json:"workspace_slug,omitempty"`
-	IssueIdentifier      string                 `json:"issue_identifier,omitempty"`
-	RemoteMCPConnections []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
+	// Only an accepted start response can establish this prompt-time optimization.
+	emptyCommentHistory            *protocol.EmptyIssueCommentHistory
+	ID                             string                 `json:"id"`
+	AgentID                        string                 `json:"agent_id"`
+	RuntimeID                      string                 `json:"runtime_id"`
+	IssueID                        string                 `json:"issue_id"`
+	WorkspaceID                    string                 `json:"workspace_id"`
+	WorkspaceSlug                  string                 `json:"workspace_slug,omitempty"`
+	IssueIdentifier                string                 `json:"issue_identifier,omitempty"`
+	IssueSnapshot                  *IssueTaskSnapshot     `json:"issue_snapshot,omitempty"`
+	ClaimAttempt                   int                    `json:"claim_attempt,omitempty"`    // task retry counter used by per-attempt telemetry
+	ClaimGeneration                int64                  `json:"claim_generation,omitempty"` // lease generation; changes when a stale dispatch is reclaimed
+	TaskRunEvidenceModelUsageV1    bool                   `json:"task_run_evidence_model_usage_v1,omitempty"`
+	IssueStartContractVersion      int                    `json:"issue_start_contract_version,omitempty"`
+	IssueCompletionContractVersion int                    `json:"issue_completion_contract_version,omitempty"`
+	RemoteMCPConnections           []remotemcp.Connection `json:"remote_mcp_connections,omitempty"`
 	// RemoteMCPDaemonToken stays inside the daemon and authenticates the local
 	// broker's credential-resolution calls. It must never enter agent env/config.
 	RemoteMCPDaemonToken string `json:"remote_mcp_daemon_token,omitempty"`
@@ -115,7 +130,7 @@ type Task struct {
 	ProjectDescription                string                 `json:"project_description,omitempty"`              // durable project-level context injected into the brief
 	ProjectResources                  []ProjectResourceData  `json:"project_resources,omitempty"`                // project-scoped resources to expose to the agent
 	IsLeaderTask                      bool                   `json:"is_leader_task,omitempty"`                   // true when executing in the squad-leader coordinator role
-	ConciseMode                       bool                   `json:"concise_mode,omitempty"`                     // task-level opt-in to pass only the user's input
+	ConciseMode                       bool                   `json:"concise_mode,omitempty"`                     // task-level opt-in to use a compact flow prompt without the full runtime brief
 	LeaderRoleResolved                bool                   `json:"leader_role_resolved,omitempty"`             // server capability: IsLeaderTask/SquadID authoritatively answer "is this a leader run". Absent on servers predating it — those before #4951 never sent is_leader_task at all, later ones send it without this guarantee — so taskIsSquadLeader falls back to the briefing marker for both (MUL-5811)
 	PriorSessionID                    string                 `json:"prior_session_id,omitempty"`                 // Claude session ID from a previous task on this issue
 	PriorWorkDir                      string                 `json:"prior_work_dir,omitempty"`                   // work_dir from a previous task on this issue
@@ -129,11 +144,12 @@ type Task struct {
 	TriggerAuthorName                 string                 `json:"trigger_author_name,omitempty"`              // display name of the triggering comment author
 	NewCommentCount                   int                    `json:"new_comment_count,omitempty"`                // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
 	NewCommentsSince                  string                 `json:"new_comments_since,omitempty"`               // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
+	NewCommentsDeltaKnown             bool                   `json:"new_comments_delta_known,omitempty"`         // the issue-wide delta above was actually COMPUTED this claim; a zero NewCommentCount means "nothing was said" only when this is true (MUL-6984)
 	ChatSessionID                     string                 `json:"chat_session_id,omitempty"`                  // non-empty for chat tasks
 	ChatChannelType                   string                 `json:"chat_channel_type,omitempty"`                // "slack" when the chat session is backed by an IM channel; empty for a web-only chat. Drives the channel-awareness block in the prompt
 	ChatChannelDeliversFiles          bool                   `json:"chat_channel_delivers_files,omitempty"`      // server capability: this deployment carries a file the agent produces the last hop into this conversation. Absent on a server predating it, which reads as false — the run is told to describe its file in words, and the worst case is a delivery that could have happened did not. Must never be re-derived from chat_channel_type: whether the hop exists depends on the SERVER's storage and adapter wiring, which no daemon can see (MUL-4899)
 	ChatType                          string                 `json:"chat_type,omitempty"`                        // "group" when the channel conversation is a shared room, "p2p" for a 1:1 with the bot. Empty for a web chat or an old server; the per-turn prompt then reports unknown rather than guessing 1:1
-	ChatInThread                      bool                   `json:"chat_in_thread,omitempty"`                   // true when the latest @mention was a thread reply; selects which read command the prompt tells the agent to start with
+	ChatInThread                      bool                   `json:"chat_in_thread,omitempty"`                   // immutable task delivery is a Slack thread reply or a Feishu group topic (root or reply); selects the native thread reader
 	ChatMessage                       string                 `json:"chat_message,omitempty"`                     // user message content for chat tasks
 	ChatMessageAttachments            []ChatAttachmentMeta   `json:"chat_message_attachments,omitempty"`         // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
 	ChatIntro                         bool                   `json:"chat_intro,omitempty"`                       // legacy compatibility for historical is_agent_intro sessions; new agent creation no longer creates these chats
@@ -150,8 +166,8 @@ type Task struct {
 	QuickCreateAttachmentIDs          []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
 	UIDraftCreateContext              json.RawMessage        `json:"ui_draft_create_context,omitempty"`
 	DesignRestoreContext              json.RawMessage        `json:"design_restore_context,omitempty"`
-	TestGenerationContext             string                 `json:"test_generation_context,omitempty"`
-	TestRunContext                    string                 `json:"test_run_context,omitempty"`
+	TestGenerationContext             json.RawMessage        `json:"test_generation_context,omitempty"`
+	TestRunContext                    json.RawMessage        `json:"test_run_context,omitempty"`
 	DesignSystemProfileAnalyzeContext json.RawMessage        `json:"design_system_profile_analyze_context,omitempty"`
 	TemplateBlueprintAnalyzeContext   json.RawMessage        `json:"design_template_blueprint_analyze_context,omitempty"`
 	ProjectDesignSystemContext        json.RawMessage        `json:"project_design_system_context,omitempty"`
@@ -327,13 +343,64 @@ type TaskResult struct {
 	SessionRolloutMissing bool   `json:"-"`
 	// RetiredSessionID identifies an unresumable session that must no longer
 	// be selected after any terminal outcome, including successful completion.
-	RetiredSessionID             string                              `json:"-"`
-	Usage                        []TaskUsageEntry                    `json:"usage,omitempty"` // per-model token usage
-	ProjectDesignSystemArtifacts *ProjectDesignSystemArtifacts       `json:"-"`               // legacy three-file inline payload; collected for non-V2 tasks only
-	ProjectDesignSystemPackage   *ProjectDesignSystemPackageReceipt  `json:"-"`               // V2-native package receipt (archive + audit + preview); populated only on the V2 path
-	DesignDocumentGrounding      *designdocument.RepositoryGrounding `json:"-"`               // validated A3 grounding receipt; no local paths or source contents
-	DesignImplementation         *designimplementation.Receipt       `json:"-"`               // daemon-validated implementation result and evidence binding
-	DesignDocumentPackage        *DesignDocumentPackageReceipt       `json:"-"`               // page-design package receipt (archive + audit + preview); populated only by the design document finalize gate
+	RetiredSessionID               string                              `json:"-"`
+	ClaimAttempt                   int                                 `json:"-"`
+	ClaimGeneration                int64                               `json:"-"`
+	IssueCompletionContractVersion int                                 `json:"-"`
+	IssueCompletion                *IssueCompletionIntent              `json:"-"`
+	Usage                          []TaskUsageEntry                    `json:"usage,omitempty"` // per-model token usage
+	ProjectDesignSystemArtifacts   *ProjectDesignSystemArtifacts       `json:"-"`               // legacy three-file inline payload; collected for non-V2 tasks only
+	ProjectDesignSystemPackage     *ProjectDesignSystemPackageReceipt  `json:"-"`               // V2-native package receipt (archive + audit + preview); populated only on the V2 path
+	DesignDocumentGrounding        *designdocument.RepositoryGrounding `json:"-"`               // validated A3 grounding receipt; no local paths or source contents
+	DesignImplementation           *designimplementation.Receipt       `json:"-"`               // daemon-validated implementation result and evidence binding
+	DesignDocumentPackage          *DesignDocumentPackageReceipt       `json:"-"`               // page-design package receipt (archive + audit + preview); populated only by the design document finalize gate
+}
+
+type IssueCompletionOutcome string
+
+const (
+	IssueCompletionOutcomeDelivered   IssueCompletionOutcome = "delivered"
+	IssueCompletionOutcomeReviewReady IssueCompletionOutcome = "review_ready"
+	IssueCompletionOutcomeBlocked     IssueCompletionOutcome = "blocked"
+)
+
+// IssueCompletionIntent is terminal issue delivery only. Nonterminal input
+// requests use TaskResult.PendingInput and never enter this contract.
+type IssueCompletionIntent struct {
+	Version      int                    `json:"version"`
+	Outcome      IssueCompletionOutcome `json:"outcome"`
+	Comment      string                 `json:"comment"`
+	BaseRevision int64                  `json:"base_revision,omitempty"`
+	BaseETag     string                 `json:"base_etag,omitempty"`
+	BaseStatus   string                 `json:"base_status,omitempty"`
+}
+
+type IssueCompletionReport struct {
+	ClaimGeneration int64
+	Intent          *IssueCompletionIntent
+}
+
+type IssueStartIntent struct {
+	Version      int    `json:"version"`
+	BaseRevision int64  `json:"base_revision"`
+	BaseETag     string `json:"base_etag"`
+	BaseStatus   string `json:"base_status"`
+}
+
+type IssueStartReport struct {
+	ClaimGeneration int64            `json:"claim_generation"`
+	Intent          IssueStartIntent `json:"issue_start"`
+}
+
+type IssueStartState struct {
+	EmptyCommentHistory *protocol.EmptyIssueCommentHistory `json:"empty_comment_history,omitempty"`
+	Version             int                                `json:"version"`
+	Applied             bool                               `json:"applied"`
+	BaselineAccepted    bool                               `json:"baseline_accepted"`
+	Status              string                             `json:"status"`
+	Revision            int64                              `json:"revision"`
+	ETag                string                             `json:"etag"`
+	UpdatedAt           string                             `json:"updated_at,omitempty"`
 }
 
 // ProjectDesignSystemArtifacts is the legacy inline three-file payload the

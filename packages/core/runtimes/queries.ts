@@ -14,7 +14,22 @@ export const runtimeKeys = {
   // by-hour now follows the viewer's tz, like the other reports.
   usageByHour: (rid: string, days: number, tz: string) =>
     ["runtimes", "usage", "by-hour", rid, days, tz] as const,
+  deviceHub: (rid: string) => ["runtimes", "device-hub", rid] as const,
 };
+
+/**
+ * The device hub on a runtime's machine as its daemon last reported it. The
+ * server keeps this in memory only, so the page polls: a hub that starts or a
+ * phone that pairs should show within a report cycle.
+ */
+export function runtimeDeviceHubOptions(runtimeId: string) {
+  return queryOptions({
+    queryKey: runtimeKeys.deviceHub(runtimeId),
+    queryFn: () => api.getRuntimeDeviceHub(runtimeId),
+    staleTime: 10 * 1000,
+    refetchInterval: 15 * 1000,
+  });
+}
 
 // `tz` is the viewer's IANA name — all reports follow the viewer's tz.
 export function runtimeUsageOptions(

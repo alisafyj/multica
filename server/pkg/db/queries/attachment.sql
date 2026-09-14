@@ -297,3 +297,28 @@ ORDER BY id;
 DELETE FROM attachment
 WHERE workspace_id = sqlc.arg(workspace_id)
   AND source_context_id IS NOT NULL;
+
+-- name: ListAttachmentsByTestRunCase :many
+-- Evidence files an agent or tester uploaded for one run case.
+SELECT * FROM attachment
+WHERE test_run_case_id = $1 AND workspace_id = $2
+ORDER BY created_at ASC;
+
+-- name: CreateAttachmentCopyForIssue :one
+-- A second attachment row over the same stored object, filed under an issue:
+-- how a defect keeps the evidence of the case that found it without a
+-- second upload. The object is shared, so deleting either row must not
+-- remove it (see DeleteAttachment).
+INSERT INTO attachment (
+    id, workspace_id, issue_id, uploader_type, uploader_id, filename, url, content_type, size_bytes
+)
+SELECT $1, a.workspace_id, $2, $3, $4, a.filename, a.url, a.content_type, a.size_bytes
+FROM attachment a
+WHERE a.id = $5 AND a.workspace_id = $6
+RETURNING *;
+
+-- name: CountAttachmentsSharingURL :one
+-- How many rows point at one stored object. A defect's evidence copy shares
+-- the object with the run case's original, so deleting one row must leave
+-- the object alone while the other still references it.
+SELECT count(*) FROM attachment WHERE url = $1 AND workspace_id = $2;

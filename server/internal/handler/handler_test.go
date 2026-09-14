@@ -1042,7 +1042,17 @@ func TestScheduledAutopilotAllowsActiveDuplicateIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
 	}
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
+	// A scheduled dispatch always fires through a trigger, and since MUL-6951 that
+	// trigger is what names the human the run acts as. Seed one rather than passing
+	// a zero id, which is a shape the scheduler cannot produce.
+	scheduleTriggerID := dbfx.Insert(t, "autopilot_trigger", testutil.Cols{
+		"autopilot_id":    autopilotID,
+		"kind":            "schedule",
+		"cron_expression": "0 * * * *",
+		"created_by_type": "member",
+		"created_by_id":   testUserID,
+	})
+	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, parseUUID(scheduleTriggerID), "schedule", nil)
 	if err != nil {
 		t.Fatalf("DispatchAutopilot schedule duplicate: %v", err)
 	}
@@ -1115,7 +1125,7 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
 	}
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	run, _, err := testHandler.AutopilotService.DispatchAutopilotManual(ctx, ap, pgtype.UUID{}, nil, parseUUID(testUserID))
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -1173,8 +1183,7 @@ func TestAutopilotDispatchWaitsForCompletedProjectAndSkips(t *testing.T) {
 		RETURNING id::text
 	`, testWorkspaceID, "Autopilot project target", testUserID).Scan(&projectID)
 
-	var agentID string
-	dbfx.QueryRow(t, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID)
+	agentID := createHandlerTestAgent(t, "Autopilot completed-project agent", nil)
 
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Project-linked autopilot",
@@ -1217,7 +1226,9 @@ func TestAutopilotDispatchWaitsForCompletedProjectAndSkips(t *testing.T) {
 	}
 	dispatched := make(chan dispatchResult, 1)
 	go func() {
-		run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+		// Manual dispatch with an explicit actor (MUL-6951: a no-actor,
+		// no-trigger call would fail-closed on principal resolution).
+		run, _, err := testHandler.AutopilotService.DispatchAutopilotManual(ctx, ap, pgtype.UUID{}, nil, parseUUID(testUserID))
 		dispatched <- dispatchResult{run: run, err: err}
 	}()
 	select {
@@ -1297,7 +1308,7 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
 	}
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	run, _, err := testHandler.AutopilotService.DispatchAutopilotManual(ctx, ap, pgtype.UUID{}, nil, parseUUID(testUserID))
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -1374,7 +1385,7 @@ func TestAutopilotDispatchUsesCurrentProjectBinding(t *testing.T) {
 	req = withURLParam(req, "id", autopilotID)
 	w = testutil.Call(t, testHandler.UpdateAutopilot, req).Want(http.StatusOK)
 
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	run, _, err := testHandler.AutopilotService.DispatchAutopilotManual(ctx, ap, pgtype.UUID{}, nil, parseUUID(testUserID))
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -2115,6 +2126,29 @@ func TestUpdateAgentMcpConfigObjectUpdatesValue(t *testing.T) {
 	w.JSON(&updated)
 	assertJSONEqual(t, updated.McpConfig, `{"preset":"new"}`)
 	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"new"}`)
+}
+
+func TestUpdateAgentMcpConfigPreservesBoundaryEmptyArguments(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Mcp Empty Args", nil)
+	want := `{"mcpServers":{"fetch":{"command":"uvx","args":["","2222","","333",""]}}}`
+
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"mcp_config": map[string]any{
+			"mcpServers": map[string]any{
+				"fetch": map[string]any{
+					"command": "uvx",
+					"args":    []string{"", "2222", "", "333", ""},
+				},
+			},
+		},
+	})
+	req = withURLParam(req, "id", agentID)
+	w := testutil.Call(t, testHandler.UpdateAgent, req).Want(http.StatusOK)
+
+	var updated AgentResponse
+	w.JSON(&updated)
+	assertJSONEqual(t, updated.McpConfig, want)
+	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), want)
 }
 
 func TestCreateAgentMcpConfigNullStoresSQLNull(t *testing.T) {

@@ -4,11 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Loader2,
   Lock,
-  Pencil,
   Plus,
   RefreshCw,
   Server,
-  Trash2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime, WorkspaceMcpServer } from "@multica/core/types";
@@ -39,20 +37,37 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
+import {
+  McpRemoveButton,
+  McpServerRow,
+  McpTransportIcon,
+} from "../../../common/mcp-server-row";
 import { useT } from "../../../i18n";
 import {
+  getRuntimeMcpPolicy,
   listManagedMcpServers,
+  mcpTransportLabel,
   removeManagedMcpServer,
+  setRuntimeMcpPolicy,
   upsertManagedMcpServer,
   type ManagedMcpServer,
+  type RuntimeMcpPolicy,
 } from "./mcp-config-model";
 import { McpServerDialog } from "./mcp-server-dialog";
 
@@ -86,6 +101,13 @@ export function McpConfigTab({
       ? runtime.id
       : null;
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
+  const savedRuntimePolicy = useMemo(
+    () => getRuntimeMcpPolicy(agent.mcp_config),
+    [agent.mcp_config],
+  );
+  const [runtimePolicy, setRuntimePolicy] =
+    useState<RuntimeMcpPolicy>(savedRuntimePolicy);
+  const [savingRuntimePolicy, setSavingRuntimePolicy] = useState(false);
   // The workspace MCP servers ASSIGNED to this agent, plus the library to pick
   // from (GH #6062). A library entry does nothing until it is added here, and
   // each assignment carries its own toggle. The API returns names and
@@ -132,20 +154,165 @@ export function McpConfigTab({
   const [editingServer, setEditingServer] = useState<ManagedMcpServer | null>(
     null,
   );
+  const [renamingServer, setRenamingServer] =
+    useState<ManagedMcpServer | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [renamePending, setRenamePending] = useState(false);
   const [deletingServer, setDeletingServer] =
     useState<ManagedMcpServer | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => onDirtyChange?.(false), [onDirtyChange]);
+  useEffect(() => setRuntimePolicy(savedRuntimePolicy), [savedRuntimePolicy]);
+
+  const runtimeSelectionSupported = useMemo(() => {
+    if (!runtime || !["claude", "codex"].includes(runtime.provider)) return false;
+    const capabilities = runtime.metadata?.capabilities;
+    return (
+      Array.isArray(capabilities) &&
+      capabilities.includes("runtime-mcp-selection-v1")
+    );
+  }, [runtime]);
+  const canEditRuntimePolicy =
+    canEdit &&
+    !redacted &&
+    canReadRuntime &&
+    runtime?.status === "online" &&
+    runtimeSelectionSupported &&
+    runtimeQuery.isSuccess &&
+    runtimeQuery.data.mcpSupported === true;
+  const runtimeInventoryNames = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...(runtimePolicy.mode === "allowlist" ? runtimePolicy.allow : []),
+          ...(runtimeQuery.data?.mcpServers.map((server) => server.name) ?? []),
+        ]),
+      ),
+    [runtimePolicy, runtimeQuery.data],
+  );
+
+  const saveRuntimePolicy = async (next: RuntimeMcpPolicy) => {
+    if (!canEditRuntimePolicy || savingRuntimePolicy) return;
+    const previous = runtimePolicy;
+    setRuntimePolicy(next);
+    setSavingRuntimePolicy(true);
+    try {
+      await onSave({
+        mcp_config: setRuntimeMcpPolicy(agent.mcp_config, next),
+      });
+    } catch (error) {
+      setRuntimePolicy(previous);
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : t(($) => $.tab_body.mcp_config.save_failed_toast),
+      );
+    } finally {
+      setSavingRuntimePolicy(false);
+    }
+  };
+
+  const handleRuntimePolicyMode = (mode: string | null) => {
+    if (mode === "inherit" || mode === "deny_all") {
+      void saveRuntimePolicy({ mode, allow: [] });
+    } else if (mode === "allowlist") {
+      void saveRuntimePolicy({ mode, allow: [] });
+    }
+  };
+
+  const handleRuntimeServerToggle = (name: string, checked: boolean) => {
+    if (runtimePolicy.mode !== "allowlist") return;
+    const next = new Set(runtimePolicy.allow);
+    if (checked) next.add(name);
+    else next.delete(name);
+    void saveRuntimePolicy({ mode: "allowlist", allow: Array.from(next) });
+  };
+
+  const startRename = (server: ManagedMcpServer) => {
+    if (renamePending) return;
+    setRenamingServer(server);
+    setRenameDraft(server.name);
+    setRenameError("");
+  };
+
+  const cancelRename = () => {
+    if (renamePending) return;
+    setRenamingServer(null);
+    setRenameDraft("");
+    setRenameError("");
+  };
 
   const openAddDialog = () => {
+    cancelRename();
     setEditingServer(null);
     setEditorOpen(true);
   };
 
   const openEditDialog = (server: ManagedMcpServer) => {
+    cancelRename();
     setEditingServer(server);
     setEditorOpen(true);
+  };
+
+  const handleRename = async () => {
+    if (!renamingServer || renamePending) return;
+    const name = renameDraft.trim();
+    if (name === "") {
+      setRenameError(t(($) => $.tab_body.mcp_config.dialog_name_required));
+      return;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+      setRenameError(t(($) => $.tab_body.mcp_config.dialog_name_invalid));
+      return;
+    }
+    if (name !== renamingServer.name && managedNames.has(name)) {
+      setRenameError(t(($) => $.tab_body.mcp_config.dialog_name_duplicate));
+      return;
+    }
+    if (name === renamingServer.name) {
+      cancelRename();
+      return;
+    }
+
+    // The agent may refresh while the inline editor is open. Renaming must
+    // preserve the latest server config instead of restoring the snapshot
+    // captured when editing began.
+    const currentServer = managedServers.find(
+      (server) =>
+        server.container === renamingServer.container &&
+        server.name === renamingServer.name,
+    );
+    if (!currentServer) {
+      setRenameError(t(($) => $.tab_body.mcp_config.rename_failed_toast));
+      return;
+    }
+
+    setRenamePending(true);
+    try {
+      await onSave({
+        mcp_config: upsertManagedMcpServer(
+          agent.mcp_config,
+          currentServer,
+          name,
+          currentServer.config,
+        ),
+      });
+      toast.success(t(($) => $.tab_body.mcp_config.renamed_toast));
+      setRenamingServer(null);
+      setRenameDraft("");
+      setRenameError("");
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : t(($) => $.tab_body.mcp_config.rename_failed_toast);
+      setRenameError(message);
+      toast.error(message);
+    } finally {
+      setRenamePending(false);
+    }
   };
 
   const handleSaveServer = async (
@@ -234,8 +401,13 @@ export function McpConfigTab({
           <h3 className="text-body font-medium">
             {t(($) => $.tab_body.mcp_config.managed_title)}
           </h3>
-          {!redacted && (
-            <Button size="sm" variant="outline" onClick={openAddDialog}>
+          {!redacted && canEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={renamePending}
+              onClick={openAddDialog}
+            >
               <Plus aria-hidden="true" />
               {t(($) => $.tab_body.mcp_config.add_action)}
             </Button>
@@ -258,14 +430,55 @@ export function McpConfigTab({
             </div>
           </div>
         ) : managedServers.length > 0 ? (
-          <McpServerList
-            servers={managedServers}
-            disabledLabel={t(($) => $.tab_body.mcp_config.agent_disabled_badge)}
-            onEdit={openEditDialog}
-            onDelete={setDeletingServer}
-            editLabel={t(($) => $.tab_body.mcp_config.edit_aria)}
-            deleteLabel={t(($) => $.tab_body.mcp_config.delete_aria)}
-          />
+          <ul className="divide-y rounded-lg border bg-surface-raised/40">
+            {managedServers.map((server) => (
+              <McpServerRow
+                key={server.name}
+                name={server.name}
+                transport={server.transport}
+                status={
+                  !server.enabled ? (
+                    <Badge variant="secondary">
+                      {t(($) => $.tab_body.mcp_config.agent_disabled_badge)}
+                    </Badge>
+                  ) : undefined
+                }
+                canManage={canEdit}
+                actionsDisabled={renamePending}
+                rename={
+                  renamingServer?.name === server.name
+                    ? {
+                        draft: renameDraft,
+                        error: renameError,
+                        pending: renamePending,
+                        onChange: (value) => {
+                          setRenameDraft(value);
+                          setRenameError("");
+                        },
+                        onCancel: cancelRename,
+                        onSubmit: () => void handleRename(),
+                      }
+                    : undefined
+                }
+                labels={{
+                  rename: t(($) => $.tab_body.mcp_config.rename_action),
+                  renameAria: t(($) => $.tab_body.mcp_config.rename_server),
+                  renameSave: t(($) => $.tab_body.mcp_config.rename_save),
+                  renameCancel: t(($) => $.tab_body.mcp_config.rename_cancel),
+                  configure: t(($) => $.tab_body.mcp_config.edit_config),
+                  configureAria: t(($) => $.tab_body.mcp_config.edit_config),
+                  remove: t(($) => $.tab_body.mcp_config.delete_action_short),
+                  removeAria: t(($) => $.tab_body.mcp_config.delete_aria),
+                }}
+                onRenameStart={() => startRename(server)}
+                onConfigure={() => openEditDialog(server)}
+                onRemove={() => {
+                  cancelRename();
+                  setDeletingServer(server);
+                }}
+              />
+            ))}
+          </ul>
         ) : (
           <McpNotice text={t(($) => $.tab_body.mcp_config.managed_empty)} />
         )}
@@ -344,6 +557,98 @@ export function McpConfigTab({
             </Button>
           )}
         </div>
+        <div className="space-y-3 rounded-lg border bg-surface-raised/40 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label
+              htmlFor="runtime-mcp-policy"
+              className="text-caption font-medium"
+            >
+              {t(($) => $.tab_body.mcp_config.runtime_policy_label)}
+            </label>
+            <Select
+              items={[
+                {
+                  value: "inherit",
+                  label: t(($) => $.tab_body.mcp_config.runtime_policy_inherit),
+                },
+                {
+                  value: "deny_all",
+                  label: t(($) => $.tab_body.mcp_config.runtime_policy_none),
+                },
+                {
+                  value: "allowlist",
+                  label: t(($) => $.tab_body.mcp_config.runtime_policy_selected),
+                },
+              ]}
+              value={runtimePolicy.mode}
+              disabled={!canEditRuntimePolicy || savingRuntimePolicy}
+              onValueChange={handleRuntimePolicyMode}
+            >
+              <SelectTrigger id="runtime-mcp-policy" size="sm" className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="inherit">
+                  {t(($) => $.tab_body.mcp_config.runtime_policy_inherit)}
+                </SelectItem>
+                <SelectItem value="deny_all">
+                  {t(($) => $.tab_body.mcp_config.runtime_policy_none)}
+                </SelectItem>
+                <SelectItem value="allowlist">
+                  {t(($) => $.tab_body.mcp_config.runtime_policy_selected)}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {!canEditRuntimePolicy && (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.tab_body.mcp_config.runtime_policy_unavailable)}
+            </p>
+          )}
+          {runtimePolicy.mode === "allowlist" &&
+            (runtimeInventoryNames.length > 0 ? (
+              <ul className="divide-y rounded-md border bg-background">
+                {runtimeInventoryNames.map((name) => {
+                  const checked = runtimePolicy.allow.includes(name);
+                  const discovered =
+                    runtimeQuery.data?.mcpServers.some(
+                      (server) => server.name === name,
+                    ) === true;
+                  return (
+                    <li key={name} className="flex items-center gap-3 px-3 py-2">
+                      <Server
+                        className="h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-body font-medium">
+                        {name}
+                      </span>
+                      {!discovered && (
+                        <Badge variant="outline">
+                          {t(($) => $.tab_body.mcp_config.runtime_policy_saved_badge)}
+                        </Badge>
+                      )}
+                      <Checkbox
+                        checked={checked}
+                        disabled={!canEditRuntimePolicy || savingRuntimePolicy}
+                        onCheckedChange={(value) =>
+                          handleRuntimeServerToggle(name, value === true)
+                        }
+                        aria-label={t(
+                          ($) => $.tab_body.mcp_config.runtime_policy_toggle_aria,
+                          { name },
+                        )}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-caption text-muted-foreground">
+                {t(($) => $.tab_body.mcp_config.runtime_policy_selected_empty)}
+              </p>
+            ))}
+        </div>
         {!runtime ? (
           <McpNotice text={t(($) => $.tab_body.mcp_config.runtime_missing)} />
         ) : !canReadRuntime ? (
@@ -390,6 +695,7 @@ export function McpConfigTab({
           open={editorOpen}
           server={editingServer}
           existingNames={managedNames}
+          hideNameWhenEditing
           onOpenChange={setEditorOpen}
           onSave={handleSaveServer}
         />
@@ -465,12 +771,8 @@ function McpWorkspaceServerRow({
   const { t } = useT("agents");
   const enabled = server.enabled !== false;
   return (
-    // Same row shape as the other two lists on this tab — icon chip, name,
-    // transport — so the three sources read as one inventory.
-    <li className="flex items-center gap-3 p-3">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-        <Server className="h-4 w-4" aria-hidden="true" />
-      </span>
+    <li className="group flex min-h-16 items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30">
+      <McpTransportIcon transport={server.transport} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-body font-medium">{server.name}</span>
@@ -480,12 +782,12 @@ function McpWorkspaceServerRow({
             </Badge>
           )}
         </div>
-        <p className="text-caption uppercase text-muted-foreground">
-          {server.transport || "unknown"}
+        <p className="text-caption text-muted-foreground">
+          {mcpTransportLabel(server.transport)}
         </p>
       </div>
       {canEdit && (
-        <>
+        <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground">
           <Switch
             checked={enabled}
             disabled={busy}
@@ -494,18 +796,16 @@ function McpWorkspaceServerRow({
               name: server.name,
             })}
           />
-          <Button
-            variant="ghost"
-            size="icon"
+          <div className="mx-1 h-4 w-px bg-surface-border" aria-hidden="true" />
+          <McpRemoveButton
             disabled={busy}
             onClick={onRemove}
-            aria-label={t(($) => $.tab_body.mcp_config.workspace_remove_aria, {
+            ariaLabel={t(($) => $.tab_body.mcp_config.workspace_remove_aria, {
               name: server.name,
             })}
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </>
+            tooltipLabel={t(($) => $.tab_body.mcp_config.workspace_remove_action)}
+          />
+        </div>
       )}
       {!canEdit && !enabled && (
         <Badge variant="secondary">
@@ -551,8 +851,8 @@ function McpWorkspaceServerPicker({
             onClick={() => onSelect(server.id)}
           >
             <span className="min-w-0 flex-1 truncate">{server.name}</span>
-            <span className="shrink-0 text-caption uppercase text-muted-foreground">
-              {server.transport || "unknown"}
+            <span className="shrink-0 text-caption text-muted-foreground">
+              {mcpTransportLabel(server.transport)}
             </span>
           </DropdownMenuItem>
         ))}
@@ -565,60 +865,35 @@ function McpServerList({
   servers,
   disabledLabel,
   overriddenLabel,
-  onEdit,
-  onDelete,
-  editLabel,
-  deleteLabel,
 }: {
   servers: McpServerView[];
   disabledLabel: string;
   overriddenLabel?: string;
-  onEdit?: (server: ManagedMcpServer) => void;
-  onDelete?: (server: ManagedMcpServer) => void;
-  editLabel?: string;
-  deleteLabel?: string;
 }) {
   return (
     <ul className="divide-y rounded-lg border bg-surface-raised/40">
       {servers.map((server) => (
-        <li key={server.name} className="flex items-center gap-3 p-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <Server className="h-4 w-4" aria-hidden="true" />
-          </span>
+        <li
+          key={server.name}
+          className="group flex min-h-16 items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30"
+        >
+          <McpTransportIcon transport={server.transport} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-body font-medium">{server.name}</p>
             <p className="text-caption text-muted-foreground">
-              <span className="uppercase">{server.transport}</span>
-              {server.source ? ` · ${server.source}` : null}
+              {mcpTransportLabel(server.transport)}
             </p>
+            {server.source ? (
+              <p className="text-caption text-muted-foreground">
+                {server.source}
+              </p>
+            ) : null}
           </div>
           {server.overridden && overriddenLabel ? (
             <Badge variant="outline">{overriddenLabel}</Badge>
           ) : !server.enabled ? (
             <Badge variant="outline">{disabledLabel}</Badge>
           ) : null}
-          {onEdit && onDelete && (
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`${editLabel} ${server.name}`}
-                onClick={() => onEdit(server as ManagedMcpServer)}
-              >
-                <Pencil aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`${deleteLabel} ${server.name}`}
-                onClick={() => onDelete(server as ManagedMcpServer)}
-              >
-                <Trash2 aria-hidden="true" />
-              </Button>
-            </div>
-          )}
         </li>
       ))}
     </ul>

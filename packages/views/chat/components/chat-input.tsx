@@ -2,8 +2,13 @@
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { TriangleAlert } from "lucide-react";
+import { TriangleAlert, Zap } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@multica/ui/components/ui/tooltip";
 import {
   ContentEditor,
   type ContentEditorRef,
@@ -60,6 +65,7 @@ interface ChatInputProps {
     attachmentIds: string[] | undefined,
     commitInput: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
     draftAttachments: Attachment[],
+    conciseMode: boolean,
   ) => void | boolean | Promise<void | boolean>;
   restoreDraftRequest?: {
     id: string;
@@ -213,6 +219,12 @@ export function ChatInput({
   const storeUploads = useChatStore(
     (s) => s.inputDraftAttachments[draftKey] ?? EMPTY_UPLOADS,
   );
+  // Concise mode lives in the store next to the drafts, scoped by the same
+  // slot key: the choice belongs to the conversation being composed, holds
+  // across every send in the session (SY-326), and a new chat starts at
+  // standard (undefined → false) without inheriting another slot's value.
+  const conciseMode = useChatStore((s) => s.conciseModes[draftKey] ?? false);
+  const setConciseMode = useChatStore((s) => s.setConciseMode);
   const setInputDraft = useChatStore((s) => s.setInputDraft);
   const setInputDraftAttachments = useChatStore((s) => s.setInputDraftAttachments);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
@@ -568,6 +580,7 @@ export function ChatInput({
         uniqueActiveIds.length > 0 ? uniqueActiveIds : undefined,
         commitInput,
         draftAttachments.filter((attachment) => uniqueActiveIds.includes(attachment.id)),
+        conciseMode,
       );
       // Owner rejected the send (or threw, which useComposerSubmit also treats
       // as a rejection): the draft was never committed, so it stays put for
@@ -732,6 +745,39 @@ export function ChatInput({
           </div>
         )}
         <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
+          {!noAgent && !agentAccessRevoked && !draftKeyOverride && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <label
+                    className={cn(
+                      "flex h-6 cursor-pointer items-center gap-1 rounded-full border border-transparent px-1.5 text-caption text-muted-foreground transition-colors",
+                      // Selected state must stay identifiable on hover, so the
+                      // active styling sits on the label, not a hover-only rule.
+                      conciseMode
+                        ? "border-brand/30 bg-brand/10 text-foreground"
+                        : "hover:bg-accent",
+                    )}
+                    title={t(($) => $.input.concise_mode_tooltip)}
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-3 w-3 accent-foreground"
+                      checked={conciseMode}
+                      aria-label={t(($) => $.input.concise_mode_aria)}
+                      disabled={disabled || submitting}
+                      onChange={(e) => setConciseMode(draftKey, e.target.checked)}
+                    />
+                    <Zap className="h-3 w-3" aria-hidden="true" />
+                    <span aria-hidden="true">{t(($) => $.input.concise_mode)}</span>
+                  </label>
+                }
+              />
+              <TooltipContent side="top">
+                {t(($) => $.input.concise_mode_tooltip)}
+              </TooltipContent>
+            </Tooltip>
+          )}
           <SubmitButton
             onClick={submit}
             disabled={hasNothingToSend || submitting || !!disabled || !!noAgent}

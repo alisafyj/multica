@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Settings2,
   Trash2,
   X,
 } from "lucide-react";
@@ -62,6 +63,7 @@ import {
   type WorktreeUnavailableReason,
 } from "./local-directory-mode-dialog";
 import { localDirectoryLabel } from "./local-directory-label";
+import { GithubRepositorySettingsDialog } from "./github-repository-settings-dialog";
 import { useT } from "../../i18n";
 import { githubShortLabel } from "../../common/github-url";
 import { AppLink } from "../../navigation";
@@ -135,6 +137,9 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const [modeDialog, setModeDialog] = useState<ModeDialogState | null>(null);
   const [modeSaving, setModeSaving] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+  const [githubSettingsResource, setGithubSettingsResource] = useState<
+    (ProjectResource & { resource_ref: GithubRepoResourceRef }) | null
+  >(null);
 
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
@@ -404,6 +409,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   localDaemonId={localDaemonId}
                   canEdit={desktopMode}
                   onRemove={() => handleRemove(resource)}
+                  onEditGithubSettings={setGithubSettingsResource}
                   onRenameLocalDirectory={handleRenameLocalDirectory}
                   onEditLocalDirectoryMode={(target) => {
                     setModeError(null);
@@ -602,6 +608,23 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
           onConfirm={(mode) => void handleConfirmMode(mode)}
         />
       )}
+      {githubSettingsResource && (
+        <GithubRepositorySettingsDialog
+          open
+          value={githubSettingsResource.resource_ref}
+          saving={updateResource.isPending}
+          onOpenChange={(next) => {
+            if (!next) setGithubSettingsResource(null);
+          }}
+          onSave={async (resourceRef) => {
+            await updateResource.mutateAsync({
+              resourceId: githubSettingsResource.id,
+              data: { resource_ref: resourceRef },
+            });
+            setGithubSettingsResource(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -634,6 +657,9 @@ interface ResourceRowProps {
   localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
+  onEditGithubSettings: (
+    resource: ProjectResource & { resource_ref: GithubRepoResourceRef },
+  ) => void;
   onRenameLocalDirectory: (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
     nextLabel: string,
@@ -648,6 +674,7 @@ function ResourceRow({
   localDaemonId,
   canEdit,
   onRemove,
+  onEditGithubSettings,
   onRenameLocalDirectory,
   onEditLocalDirectoryMode,
 }: ResourceRowProps) {
@@ -674,6 +701,14 @@ function ResourceRow({
           />
           <TooltipContent side="top" className="whitespace-pre-line">{tooltip}</TooltipContent>
         </Tooltip>
+        <button
+          type="button"
+          onClick={() => onEditGithubSettings(resource)}
+          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+          title={t(($) => $.resources.github_settings_tooltip)}
+        >
+          <Settings2 className="size-3 text-muted-foreground" />
+        </button>
         <button
           type="button"
           onClick={onRemove}

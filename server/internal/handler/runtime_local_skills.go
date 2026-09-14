@@ -188,6 +188,9 @@ type RuntimeLocalSkillSummary struct {
 	Plugin     string `json:"plugin,omitempty"`
 	CanDisable bool   `json:"can_disable,omitempty"`
 	FileCount  int    `json:"file_count"`
+	// Older daemons omit this field. False leaves native controls available
+	// but means bundle import and FileCount are unavailable.
+	CanImport *bool `json:"can_import,omitempty"`
 }
 
 // RuntimeLocalMcpServerSummary is deliberately non-secret. The daemon only

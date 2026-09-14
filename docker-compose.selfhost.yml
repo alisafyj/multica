@@ -64,6 +64,10 @@ services:
       - ${SSO_PUBLIC_KEY_FILE:-/dev/null}:/run/secrets/company-sso-public.pem:ro
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-multica}:${POSTGRES_PASSWORD:-multica}@multica-postgres:5432/${POSTGRES_DB:-multica}?sslmode=disable
+      DATABASE_SEARCH_WORK_MEM_MB: ${DATABASE_SEARCH_WORK_MEM_MB:-64}
+      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL:-}
+      DATABASE_REPLICA_MAX_CONNS: ${DATABASE_REPLICA_MAX_CONNS:-}
+      DATABASE_REPLICA_MIN_CONNS: ${DATABASE_REPLICA_MIN_CONNS:-}
       PORT: "8080"
       METRICS_ADDR: ${METRICS_ADDR:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a strong random value — generate one with 'openssl rand -hex 32'}
@@ -188,6 +192,7 @@ services:
       MULTICA_LARK_SECRET_KEY: ${MULTICA_LARK_SECRET_KEY:-}
       MULTICA_LARK_HTTP_BASE_URL: ${MULTICA_LARK_HTTP_BASE_URL:-}
       MULTICA_LARK_CALLBACK_BASE_URL: ${MULTICA_LARK_CALLBACK_BASE_URL:-}
+      MULTICA_PRD_TEMPLATE_WIKI_TOKEN: ${MULTICA_PRD_TEMPLATE_WIKI_TOKEN:-}
       # Slack bot integration. MULTICA_SLACK_SECRET_KEY is the opt-in: unset =
       # integration disabled. It decrypts the per-installation bot/app tokens,
       # which are brought by each workspace via OAuth/BYO and stored encrypted

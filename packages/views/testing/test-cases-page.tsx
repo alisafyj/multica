@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, FlaskConical, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ClipboardList, FlaskConical, GitCompareArrows, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -20,6 +20,7 @@ import {
   useCreateTestGenerationJob,
   useDeleteTestCase,
   useTestCaseViewStore,
+  useCreateTestRun,
 } from "@multica/core/testing";
 import type {
   TestCase,
@@ -44,6 +45,7 @@ import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 import { formatRepoSummary, knownEnumKey } from "./case-summary";
 import { AddToPlanDialog } from "./components/add-to-plan-dialog";
+import { RecommendCasesDialog } from "./components/recommend-cases-dialog";
 import { TestsTabs } from "./components/tests-tabs";
 import { resolveSelectedProjectId } from "./project-selection";
 
@@ -128,6 +130,18 @@ export function TestCasesPage() {
   const [isStartingGeneration, setIsStartingGeneration] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TestCase | null>(null);
   const [addToPlanOpen, setAddToPlanOpen] = useState(false);
+  const [recommendOpen, setRecommendOpen] = useState(false);
+  const createRun = useCreateTestRun();
+
+  // A run straight from a recommendation: the change is the scope, so the
+  // run is titled by it. Navigation waits for the server-issued run id.
+  async function startRunForCases(caseIds: string[]) {
+    const run = await createRun.mutateAsync({
+      test_case_ids: caseIds,
+      title: t(($) => $.recommend.runTitle, { count: caseIds.length }),
+    });
+    navigation.push(paths.testRunDetail(run.id));
+  }
 
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -213,6 +227,15 @@ export function TestCasesPage() {
         {/* PageHeader lays children out without a gap; the action cluster
             spaces itself. */}
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={selectedProjectId.length === 0}
+            onClick={() => setRecommendOpen(true)}
+          >
+            <GitCompareArrows className="size-4" />
+            {t(($) => $.recommend.action)}
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -401,6 +424,14 @@ export function TestCasesPage() {
           </div>
         </section>
       </div>
+
+      <RecommendCasesDialog
+        open={recommendOpen}
+        onOpenChange={setRecommendOpen}
+        projectId={selectedProjectId}
+        onSelect={(ids) => setSelectedIds(new Set(ids))}
+        onStartRun={startRunForCases}
+      />
 
       <AddToPlanDialog
         open={addToPlanOpen}

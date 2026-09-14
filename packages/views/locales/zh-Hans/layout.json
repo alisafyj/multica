@@ -40,7 +40,7 @@
     "feishu_group": "飞书群",
     "feedback": "反馈",
     "check_for_updates": "检查更新",
-    "update_ready": "新版本 {{version}} 已准备好下载",
+    "update_ready": "发现新版本 {{version}}，正在后台下载",
     "up_to_date": "已是最新版本",
     "server_version": "服务器版本 {{version}}",
     "upstream_base_version": "社区版基座版本 {{version}}"
@@ -61,8 +61,10 @@
     "new_issue": "新建任务",
     "new_issue_shortcut": "C",
     "pinned_label": "固定",
-    "workspace_group": "工作区",
-    "configure_group": "配置",
-    "unread_overflow": "99+"
+    "unread_overflow": "99+",
+    "work_group": "工作",
+    "ai_team_group": "AI 团队",
+    "show_more_pins": "再显示 {{count}} 项...",
+    "show_fewer_pins": "收起"
   }
 }

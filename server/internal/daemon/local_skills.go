@@ -48,6 +48,9 @@ type runtimeLocalSkillSummary struct {
 	Plugin     string `json:"plugin,omitempty"`
 	CanDisable bool   `json:"can_disable,omitempty"`
 	FileCount  int    `json:"file_count"`
+	// A failed bundle collection must not hide a natively controllable skill.
+	// FileCount is unavailable (zero) when CanImport is explicitly false.
+	CanImport *bool `json:"can_import,omitempty"`
 }
 
 type runtimeLocalSkillBundle struct {
@@ -64,10 +67,11 @@ type runtimeLocalSkillBundle struct {
 // localSkillRootsForProvider; the kind is surfaced to the UI on each
 // discovered skill (see runtimeLocalSkillSummary.Root).
 type localSkillRoot struct {
-	path      string
-	kind      string
-	keyPrefix string
-	plugin    string
+	path       string
+	kind       string
+	keyPrefix  string
+	namePrefix string
+	plugin     string
 }
 
 const (
@@ -80,9 +84,7 @@ const (
 	// same-key skill in the provider directory keeps winning.
 	localSkillRootUniversal = "universal"
 	// localSkillRootPlugin marks skills contributed by an enabled runtime
-	// plugin. Plugin roots use a namespace prefix so their invocation keys
-	// match Claude Code (for example paper-desktop:design-to-code) and never
-	// collide with standalone user skills.
+	// plugin. Stable selection keys may differ from native invocation names.
 	localSkillRootPlugin = "plugin"
 )
 
@@ -265,6 +267,25 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 					plugin:    plugin.ID,
 				})
 			}
+		}
+	}
+	if provider == "codex" {
+		plugins, err := agent.CodexPluginSkillRoots(filepath.Dir(providerRoot))
+		if err != nil {
+			slog.Warn("Some Codex plugin skill roots could not be verified")
+		}
+		for _, plugin := range plugins {
+			prefix := plugin.PluginID + ":"
+			if plugin.RelativePath != "." {
+				prefix += plugin.RelativePath + "/"
+			}
+			roots = append(roots, localSkillRoot{
+				path:       plugin.Path,
+				kind:       localSkillRootPlugin,
+				keyPrefix:  prefix,
+				namePrefix: plugin.Name + ":",
+				plugin:     plugin.PluginID,
+			})
 		}
 	}
 	return roots, true, nil
@@ -513,10 +534,10 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 }
 
 // enumerateLocalSkills walks `currentDir` looking for skill directories
-// (directories that contain a SKILL.md). When one is found it is registered
-// at a key relative to `walkRoot` and the recursion stops at that branch —
-// we never descend into a directory that already qualifies as a skill, even
-// if it happens to contain nested SKILL.md files of its own.
+// (directories that contain a SKILL.md). Codex also discovers skills inside
+// another skill, so retain their distinct path keys for import and disabling.
+// Other providers keep the outermost-skill boundary. This is a filesystem
+// candidate inventory, not proof that the native parser accepted a skill.
 //
 // `visited` keys on the resolved (symlink-followed) absolute path so a
 // cyclic symlink can't loop forever; this is the only reason we eagerly
@@ -542,6 +563,62 @@ func enumerateLocalSkills(
 	}
 	visited[resolved] = true
 
+	appendSkill := func(path string) {
+		rel, err := filepath.Rel(walkRoot, path)
+		if err != nil {
+			return
+		}
+		var key string
+		if rel == "." && root.namePrefix != "" {
+			key = strings.TrimSuffix(root.keyPrefix, "/")
+		} else {
+			key, err = normalizeLocalSkillKey(rel)
+			if err != nil {
+				return
+			}
+			key = root.keyPrefix + key
+		}
+		content, err := readLocalSkillMainFile(path)
+		if err != nil {
+			return
+		}
+		skillName, description := skill.ParseSkillFrontmatter(content)
+		if root.namePrefix != "" {
+			if skillName == "" {
+				skillName = filepath.Base(path)
+			}
+			skillName = root.namePrefix + skillName
+		} else if root.plugin != "" {
+			skillName = key
+		} else if skillName == "" {
+			skillName = filepath.Base(path)
+		}
+		files, err := collectLocalSkillFiles(path, false)
+		canImport := err == nil
+		fileCount := 0
+		if canImport {
+			// Supporting files exclude SKILL.md, which Content carries on import.
+			fileCount = len(files) + 1
+		}
+		*skills = append(*skills, runtimeLocalSkillSummary{
+			Key:         key,
+			Name:        skillName,
+			Description: description,
+			SourcePath:  relativizeHomePath(path),
+			Provider:    provider,
+			Root:        root.kind,
+			Plugin:      root.plugin,
+			CanDisable:  provider == "codex" || provider == "claude",
+			CanImport:   &canImport,
+			FileCount:   fileCount,
+		})
+	}
+	if depth == 0 && root.namePrefix != "" {
+		if _, err := os.Stat(filepath.Join(currentDir, "SKILL.md")); err == nil {
+			appendSkill(currentDir)
+		}
+	}
+
 	entries, err := os.ReadDir(currentDir)
 	if err != nil {
 		return
@@ -560,48 +637,10 @@ func enumerateLocalSkills(
 
 		mainPath := filepath.Join(path, "SKILL.md")
 		if _, err := os.Stat(mainPath); err == nil {
-			rel, err := filepath.Rel(walkRoot, path)
-			if err != nil {
-				continue
+			appendSkill(path)
+			if provider == "codex" || root.namePrefix != "" {
+				enumerateLocalSkills(provider, root, walkRoot, path, depth+1, visited, skills)
 			}
-			key, err := normalizeLocalSkillKey(rel)
-			if err != nil {
-				continue
-			}
-			key = root.keyPrefix + key
-
-			content, err := readLocalSkillMainFile(path)
-			if err != nil {
-				continue
-			}
-			skillName, description := skill.ParseSkillFrontmatter(content)
-			if root.plugin != "" {
-				skillName = key
-			} else if skillName == "" {
-				skillName = filepath.Base(path)
-			}
-
-			files, err := collectLocalSkillFiles(path, false)
-			if err != nil {
-				continue
-			}
-
-			*skills = append(*skills, runtimeLocalSkillSummary{
-				Key:         key,
-				Name:        skillName,
-				Description: description,
-				SourcePath:  relativizeHomePath(path),
-				Provider:    provider,
-				Root:        root.kind,
-				Plugin:      root.plugin,
-				CanDisable:  provider == "codex" || provider == "claude",
-				// `files` is the supporting bundle (collectLocalSkillFiles
-				// intentionally excludes SKILL.md so the bundle's `Content`
-				// field can carry it without duplication on import). For the
-				// list summary the user expects the total file count, so add
-				// one back for SKILL.md itself.
-				FileCount: len(files) + 1,
-			})
 			continue
 		}
 
@@ -634,10 +673,13 @@ func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillB
 	for _, root := range roots {
 		rootKey := key
 		if root.keyPrefix != "" {
-			if !strings.HasPrefix(key, root.keyPrefix) {
+			if root.namePrefix != "" && key == strings.TrimSuffix(root.keyPrefix, "/") {
+				rootKey = "."
+			} else if !strings.HasPrefix(key, root.keyPrefix) {
 				continue
+			} else {
+				rootKey = strings.TrimPrefix(key, root.keyPrefix)
 			}
-			rootKey = strings.TrimPrefix(key, root.keyPrefix)
 		}
 		skillDir := filepath.Join(root.path, filepath.FromSlash(rootKey))
 		info, err := os.Stat(skillDir)
@@ -679,7 +721,12 @@ func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillB
 			return nil, true, err
 		}
 		name, description := skill.ParseSkillFrontmatter(content)
-		if root.plugin != "" {
+		if root.namePrefix != "" {
+			if name == "" {
+				name = filepath.Base(skillDir)
+			}
+			name = root.namePrefix + name
+		} else if root.plugin != "" {
 			name = key
 		} else if name == "" {
 			name = filepath.Base(skillDir)

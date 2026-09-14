@@ -12,6 +12,7 @@ import {
   FAILURE_REASON_I18N_KEYS,
   cancelReasonLabel,
   failureReasonLabel,
+  isToolBudgetExhausted,
 } from "./task-failure";
 
 const AGENT_RESOURCES = {
@@ -109,8 +110,27 @@ describe("failureReasonLabel", () => {
 
   it("covers platform reasons added after the original hardcoded map", () => {
     expect(failureReasonLabel("invalid_task_identity", enT)).toBe(
-      "Task identity mismatch",
+      "Run identity mismatch",
     );
+  });
+
+  it("distinguishes the configured run budget from provider account quota", () => {
+    const expected: Record<SupportedLocale, string> = {
+      en: "Configured run budget exhausted",
+      "zh-Hans": "本次运行配置的预算已用尽",
+      ja: "設定された実行予算を使い切りました",
+      ko: "설정된 실행 예산을 모두 사용함",
+    };
+
+    for (const locale of Object.keys(expected) as SupportedLocale[]) {
+      const t = fixedT(locale);
+      expect(failureReasonLabel("execution_budget_exceeded", t)).toBe(
+        expected[locale],
+      );
+      expect(failureReasonLabel("execution_budget_exceeded", t)).not.toBe(
+        failureReasonLabel("agent_error.provider_quota_limit", t),
+      );
+    }
   });
 
   it("covers operational reasons emitted outside the canonical taxonomy", () => {
@@ -165,5 +185,46 @@ describe("failureReasonLabel", () => {
     expect(failureReasonLabel(null, enT)).toBeNull();
     expect(failureReasonLabel(undefined, enT)).toBeNull();
     expect(failureReasonLabel("", enT)).toBeNull();
+  });
+});
+
+describe("isToolBudgetExhausted", () => {
+  it("matches the upgraded reason value", () => {
+    expect(isToolBudgetExhausted("tool_budget_exceeded")).toBe(true);
+  });
+
+  it("matches legacy catchall rows via the raw-error witness", () => {
+    expect(
+      isToolBudgetExhausted(
+        "agent_error.unknown",
+        "pi: agent tool-call budget exceeded (cap 40)",
+      ),
+    ).toBe(true);
+    expect(
+      isToolBudgetExhausted("agent_error", "omp: agent tool-call budget exceeded (cap 120)"),
+    ).toBe(true);
+  });
+
+  it("is case-insensitive on the witness", () => {
+    expect(
+      isToolBudgetExhausted(
+        "agent_error.unknown",
+        "codex: Agent Tool-Call Budget Exceeded (cap 40)",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not fire without the witness on legacy buckets", () => {
+    expect(isToolBudgetExhausted("agent_error.unknown", "claude exited with error: exit status 1")).toBe(false);
+    expect(isToolBudgetExhausted("agent_error.unknown", null)).toBe(false);
+  });
+
+  it("leaves refined reasons alone even with the witness present", () => {
+    expect(
+      isToolBudgetExhausted(
+        "agent_error.process_failure",
+        "pi: agent tool-call budget exceeded (cap 40)",
+      ),
+    ).toBe(false);
   });
 });

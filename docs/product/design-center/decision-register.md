@@ -1,6 +1,6 @@
 # Multica 设计中心决策台账
 
-> 最后更新：2026-08-22
+> 最后更新：2026-09-03
 > 规则：保留历史，通过状态变化表达推翻或替代，不删除旧决策
 
 ## 状态说明
@@ -656,6 +656,50 @@ Open Design 的两类预置资源按各自性质分别落地，不共用一套�
 - 证据（第 2 项）：手动编辑是唯一没有智能体参与的设计文档操作。`POST /api/design-documents/{id}/manual-edit` 校验编辑集（属性白名单 + 值/选择器不得逃逸出规则）后入队 `manual_edit` 任务，钉住当前 base 修订、沿用 pinned 取证；守护进程在原本启动智能体的位置改为**确定性应用**——读回只读 base、`designdocument.ApplyManualEdits` 生成每页一份 `prototype/manual-edits/<page>.css` 并注入 `<link>`、整包写入 `$MULTICA_OUTPUT_DIR`，随后**完全复用**既有收尾链路（收集 → 静态 Audit → Chrome 预览门禁 → 上传 → 新修订 → draft 移动）。即：跳过的是作者，不是校验；一次把页面改瞎的覆盖同样会被门禁拒绝。覆盖写进独立样式表而非改写智能体的规则，是为了让「人改了什么」始终可读，底下的设计保持原样。迁移 900 放宽了 `active_operation` 的 CHECK。测试：`designdocument/manual_edit_test.go`（注入安全矩阵、确定性、链接不累积、清除语义）、`daemon/design_document_manual_edit_test.go`（整包落盘、坏编辑集失败、只有 manual_edit 跳过智能体）、`handler/design_document_manual_edit_test.go`（上下文契约、白名单拒绝、陈旧 base 冲突）、`views/manual-edit-model.test.ts`（待应用编辑集矩阵）。
 - 证据（第 1 项）：`POST /api/design-documents/{id}/deliver` 只接受已保存修订并在 Issue 上留系统评论；claim 侧由 `designDeliveryContextForIssue` 按文档自身的 saved 指针解析出 `design_delivery_context`；守护进程经 `GET /api/daemon/tasks/{taskId}/design-delivery/archive` 取包、按钉住的 digest 全量复验后以只读解包到 `.agent_context/design_delivery/package/`；两侧的 wire schema 由跨边界测试锁定（DC-059 的同类漂移）。测试：`handler/design_document_deliver_test.go`（只交付 saved、跨项目拒绝、取消交付、未交付不产生上下文）、`handler/design_delivery_binding_test.go`（schema 一致、信封字段、prompt 必须声明取证模式且禁止照抄原型）。
 - 证据（第 5 项）：链接与字节分权。令牌是永不过期的原始随机串（`mds_` 前缀），唯一死法是吊销；公开交换 `GET /api/design-shares/{token}` 每次访问签发一张 30 分钟预览能力（复用 preview capability），`Cache-Control: no-store`，字节路由只认能力不认会话——泄露的令牌最多买到一次访问的档案。一个修订至多一条活链接：创建幂等（201 新建 / 200 返回既有；partial unique index + `isUniqueViolation` 把并发创建收敛到先到者）；令牌按原始值返回，重取链接拿到的就是创建者持有的那个。吊销是终态：列表不显示已吊销链接、二次吊销 404。所有死链（未知 / 已吊销 / 文档已删 / manifest 腐烂）返回**字节相同**的 404，访问者无从分辨踩中哪一种。草稿不可分享（409 `share_draft_revision`）：保存只复制 saved 指针不清 draft 指针，可分享性按「是当前 draft 且从未保存」判定，历史修订在换草稿后仍可分享。公开页 `/shares/{token}`（web 侧匿名路由）：交换 → `inlinePrototypePage` 内联自包含文档 → `sandbox="allow-scripts"`（不给 same-origin）的 opaque-origin iframe；页内导航经注入的 capture-phase 桥 postMessage 回父页并校验 `event.source`。会话侧端点：`POST /api/design-documents/{id}/revisions/{revisionId}/share`、`GET /api/design-documents/{id}/shares`、`DELETE /api/design-documents/{id}/shares/{shareId}`。迁移 901–903（表 + 两个并发索引）；902/903 注册进 cmd/migrate 的 invalid-index 清理钩子；`design_document_share` 进工作区删除清单并在 `DeleteWorkspaceDesignDependents` 增加 CTE 真删。测试：`handler/design_document_share_test.go`（创建幂等与一次吊销、草稿/越权/坏 id 拒绝矩阵、交换能力真实可用且文件路由按原样接受、四类死链同体 404）、core schema tests（畸形响应回落）。
+
+### DC-063 设计稿生成首次真实跑通：门禁契约漂移修复与任务内预检命令
+
+- 状态：`confirmed`
+- 日期：2026-09-03
+- 依据：用户明确表述"到现在为止都没有在设计页面成功运行一次设计稿生成"，要求实现并跑通。DC-055、DC-057、DC-059 已各修一处两侧独立规定的契约漂移；本条是同一类问题的第四、第五处，加上一个此前没人做过的真实运行。
+- 问题（按 2026-09-01 任务 `01a05c8d-728f-75b8-8069-51b871427bd8` 的真实证据，智能体工作 11 分钟产出完整包后被拒）：
+  1. `service.builtinDesignContextDigest` 输出裸 hex，而 `designdocument.validateBinding` 要求 `sha256:<hex>` 引用（与已保存体系的 manifest 摘要同形）。首页选了官方目录体系的每一次运行都在守护进程收集阶段以 `design_document_collect_failed: … invalid project design system digest` 结束；服务端完成阶段的 `ValidateArchive` 会以同一理由再拒一次。
+  2. 模板残留审计扫描 `coverage.json` 本身，而 prompt 要求智能体在 `template_residue.findings` 里说明没有占位文本——"No lorem ipsum … remain." 即被判 `template_residue_detected`。
+  3. 智能体在任务内没有任何办法运行平台门禁：唯一一次审计在智能体退出后执行，`window.location.search` 这类 prompt 没提到的规则直接终结任务，没有第二次机会；prompt 只列了三条"易踩规则"。
+  4. Codex 通过 `/bin/zsh -lc` 执行命令，macOS `path_helper` 把 `/usr/local/bin` 排回 PATH 前面，守护进程前置的自身目录被 2026-08-05 的旧安装（0.4.18）遮蔽，智能体报告"documented command unavailable"，靠猜到桌面包路径才跑通。
+- 决策与实现：
+  - 内置目录体系摘要改为 `sha256:<hex>`；handler `TestCreateDesignDocumentPinsABuiltinDesignSystem` 把服务端从任务上下文导出的 binding 交给真实 `CollectDirectory`，跨边界锁死（`server/internal/service/design_context_resolver.go`、`handler/design_document_design_system_test.go`）。
+  - 模板残留扫描不再包含 `coverage` 角色（`designdocument/audit.go`，`TestAuditAcceptsResidueMarkersNamedByTheCoverageSelfReport`）。
+  - 新增 `multica design audit`（`cmd/multica/cmd_design.go` → `daemon.PreflightDesignDocumentPackage`）：与 finalize 门禁同一份收集、静态审计、loopback 预览服务与 Chromium 校验，默认读取 `$MULTICA_OUTPUT_DIR`、`.agent_context/design_document/context/task.json`、`$MULTICA_TASK_ID`，失败时退出码 1 并列出**每一条**规则与文件（任务评论只带第一条）。prompt 第 7 步要求 PASS 后才可结束；"易踩规则"补导航成员（`location`/`open`/`opener`/`top`/`parent`/`frames`/`document.write`）与 brief `entry` 必须以 `prototype/` 开头。
+  - 守护进程向智能体环境注入 `MULTICA_CLI`（自身二进制绝对路径，agent 级 custom env 不能覆盖），prompt 改为 `"$MULTICA_CLI" design audit`（`daemon/config.go`、`daemon.go`，`TestRunTaskExportsTheDaemonCLIPath`）。
+  - 文档：`apps/docs/content/docs/cli.mdx` / `cli.zh.mdx` 增加 `design audit`；缺口盘点见 [open-design-gap-2026-09-03.md](./open-design-gap-2026-09-03.md)。
+- 证据：
+  - 离线重放：2026-09-01 的真实产物在修复 1、2 并去掉 `window.location.search` 后，经守护进程 finalize 门禁与服务端 `ValidateArchive` 全部通过（0 诊断、1 个预览目标、真实 Chrome）；捆绑 CLI 对原产物报 `FAIL at collect`、对修复副本报 `PASS`。
+  - 真实运行：2026-09-03 11:09 在桌面端对文档 `69e1fa63-b8b3-4aae-a757-6f4b35258de8` 点「重新生成」，任务 `01a0653d-fe37-7dd3-95ca-8fd1f1d7e364`（codex，15m16s，45 次工具调用）在任务内运行 audit 两次——第一次 `brief_page_entry_invalid` / `prototype_page_undeclared`（entry 写成 `index.html`），自行改为 `prototype/index.html` 后 PASS；守护进程门禁 audit passed / 0 diagnostics、preview passed / 1 target、7 files；`POST …/design-document/package` 与 `complete` 均 200；修订 `e8978ee4-bfbb-4719-a813-8f666a33bf7f`（rev 1，`sha256:2dabf6b9…`）落库，draft 指针移动，`last_error` 清空；桌面端显示 v1 草稿、可交互 12 秒循环 hero、设计评审五项 9/10（两轮）、「保存为设计稿」可用。
+  - 测试：`internal/designdocument`、`internal/service`（resolver）、`cmd/multica`、`internal/daemon` 全包，`internal/handler` 的 DesignDocument / DesignSystem / DesignDelivery 子集（live PostgreSQL）。
+- 边界：
+  - 本次真实运行发生在 `MULTICA_CLI` 落地之前，智能体是靠自行搜索找到捆绑二进制的；守护进程已重建重启，下一次运行生效。`/usr/local/bin/multica`（0.4.18）仍是旧安装，建议更新或删除。
+  - 门禁仍是一次性；守护进程侧的"审计失败→带诊断重新提示智能体"循环未做（Open Design 也没有：OD Next 禁止智能体自检，靠 deliverable validation 与重试）。`last_error` 仍只带第一条诊断，`regenerate` 不携带上次失败原因。
+  - 视觉、信息架构与业务质量验收（A6）仍未做；本次产物是"animated hero"演示，只证明链路。
+  - 旧文档冻结快照中的裸摘要不需要迁移：`regenerate` 与 `adjust` 都重新解析 `design_context`（已由本次运行验证）。
+  - `internal/service` 的 7 个 `TestAutopilotQuota*` 因共享测试库 `multica` 缺少上游合并带来的迁移 448（`rejection_notified_at`）而失败，与本条无关。
+
+### DC-064 设计稿工作台 A6 首轮验收修复：跨 realm 门禁 bug 与 Open Design 预览交互补齐
+
+- 状态：`confirmed`
+- 日期：2026-09-03
+- 依据：用户对设计稿预览页的六项验收意见，要求对照 Open Design 修复。这是 A6 真人验收的第一批发现。
+- 根因（覆盖意见 2、3 及实际上全部画布交互）：`PrototypeCanvas` 的画布文档挂在 `blob:` iframe 里，节点属于 **iframe 自己的 global object**，而全部交互守卫用的是父窗口的 `instanceof Element` / `instanceof HTMLElement`——跨 realm 恒为 false。点击、悬停、框选、跨页链接、编辑回填（`repaintManualEdits` / `applyToCanvas`）在到达任何 handler 之前就被丢弃。jsdom 单 realm 永远无法复现，所以既有单测全绿而真实点击全部无效；DC-062 记录的「标注 → 智能体」「手动编辑面板」实际上是从未被真人点击过的。
+- 修复与补齐：
+  1. **跨 realm 守卫**：新增 `isElementNode` / `isStyleableElement`（读 `nodeType`，跨 realm 成立），替换画布点击、悬停、`isCanvasUi` 与三处手动编辑回填的全部 `instanceof`；矩阵测试钉住（`prototype-canvas.test.tsx`）。真实桌面端验证：编辑模式点击标题出现选中框、属性面板完整弹出。
+  2. **评论交互（OD comment pins）**：标注在画布上留下编号 pin（元素锚定用选择器解析、框选用矩形），点击 pin 滚动并高亮 composer 里对应条目；列表编号与画布一致；每条标注的说明输入原本就有，修复后真正可用。边界：标注仍是会话级草稿，随发送清空，不做 OD 的服务端持久评论与状态流转（需要新的存储模型，另行立项）。
+  3. **截图发送到对话**：推翻 DC-062 第 3 项「明确不做截图发对话」（用户本次明确要求）。截图菜单新增「截图发送到对话」，走普通附件路由进入本轮调整（`rasterizePage` → File → `stageAttachments`），智能体按参考文件读取；「复制到剪贴板」保留。
+  4. **演示模式**：工具栏新增播放按钮——整窗黑底只留活动预览（脚本运行，演示即播放），底部页码与上/下/退出控件，←/→/空格翻页、Esc 退出。
+  5. **历史版本查看**：版本区新增「历史版本」对话框（对应 OD versions 弹层）：左侧版本列表（徽标、说明、页数、智能体、时间），右侧所选版本的活动预览（按修订能力令牌加载）；「查看此版本」把工作台钉到该版本，「回退到此版本」沿用既有指针语义。侧栏行的钉住查看此前已存在。
+- 验证：views 全量 5499 通过（含新增演示模式/历史版本/截图三个组件测试与守卫矩阵）、typecheck 通过、lint 0 error；真实桌面端 HMR 验证编辑选中（见 1）；标注 pin 与演示/版本对话框的组件测试覆盖，真人复核因验收屏幕锁定暂缓一次。
+- 第二轮验收（2026-09-03，用户对照 OD 截图反馈）：①截图与 PNG/PDF 导出在桌面端报 `Tainted canvases may not be exported`——Electron `webSecurity: false` 下 blob-URL 解码的图被画布判为跨源，光栅化改为 data-URL 优先、blob 兜底、双向重试（`export-raster.ts`）。②标注工具栏重做为 OD 的浮动深色胶囊：框选/钢笔/文字/选元素四工具 + 撤销/重做 + 「为这个标记添加说明」输入直发（钢笔笔迹入包渲染、文字标记落点成 pin、帧外松手的搁浅笔迹按时序收笔）；编辑属性面板从侧栏改为跟随选中元素的浮动面板（坐标补 iframe 偏移与 zoom 缩放、随帧滚动更新）。③多视角对抗式审查（12 个子代理）确认并修复：StrictMode 下 undo/redo 在 setState 更新器里嵌套 setState 导致重做栈重复入队（提取纯转换 `annotation-history.ts`）、ink 图层缺 left/top 落在文档末尾、窄面板工具栏被裁剪、空笔迹产生 Infinity/NaN 锚点、应用修改前置条件提取为 `editApplyBlocker` 纯函数；对应补齐画布交互（doc.open/write/close 填充帧文档）、工具栏发送/排队、撤销重做矩阵、传输决策矩阵等全部测试。views 全量 5519 通过、typecheck/lint 干净。
+- 边界：OD 的评论持久化、看板模式、评论状态流转未迁（依赖服务端存储决策）；演讲者备注依赖 deck 产物形态，待 deck 可创建后随演示模式补齐。
+- 第三轮验收（2026-09-03 晚，用户报告）：①「点击标注页面渲染报错」定为瞬时环境问题——19:52 并行会话在共享 checkout 切分支时把 JSON/模块写了一半，Vite `vite-json` 对半成品报 `key must be a string` 并弹出错误遮罩；磁盘 JSON 现已全部可解析，模块转换 200，实机点击标注正常打开，无代码改动。②「工具栏跟随标注框」在同一时间窗内按旧模块图渲染所致：现行代码的标注工具栏为画布面板底部的 `absolute bottom-3` 深色胶囊（`design-document-page.tsx`），实机截图证实固定于底部中央；硬刷新（⌘R）后如仍复现再查。③截图发送到对话后，侧边栏附件 chip 现按对象 URL 渲染缩略图（图片类参考文件一律生效），行被移除、随调整发出或组件卸载时均回收 URL。④侧边栏滚动容器补 `overflow-x-hidden`（与库内其它面板惯例一致）——`overflow-y-auto` 会使另一轴同样变 auto，任何超宽子元素都会带出横向滚动条。测试：页面对象 URL stub + 缩略图/回收断言，views 39 项通过、typecheck、lint 0 error。
 
 ## 下一步
 

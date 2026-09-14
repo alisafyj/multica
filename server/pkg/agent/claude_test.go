@@ -340,6 +340,160 @@ func TestBuildClaudeArgsInheritsMCPByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgsAllowsAskUserQuestionOnlyWithCallback(t *testing.T) {
+	t.Parallel()
+
+	args := buildClaudeArgs(ExecOptions{
+		RequestUserInput: func(context.Context, PendingInputRequest) (PendingInputAnswer, error) {
+			return PendingInputAnswer{}, nil
+		},
+	}, slog.Default())
+	if slices.Contains(args, "AskUserQuestion") {
+		t.Fatalf("AskUserQuestion remained disallowed with a callback: %v", args)
+	}
+}
+
+func TestClaudeRequestUserInputWritesNativeAnswerBeforeAck(t *testing.T) {
+	t.Parallel()
+
+	var written bytes.Buffer
+	acked := make(chan bool, 1)
+	requests := make(chan PendingInputRequest, 1)
+	statuses := make(chan Message, 2)
+	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
+	msg := claudeSDKMessage{
+		RequestID: "request-native",
+		SessionID: "session-native",
+		Request: mustMarshal(t, map[string]any{
+			"subtype":     "request_user_dialog",
+			"dialog_kind": "permission_ask_user_question",
+			"tool_use_id": "tool-native",
+			"payload": map[string]any{"questions": []map[string]any{{
+				"question": "Which paths?", "header": "Paths", "multiSelect": true,
+				"options": []map[string]string{{"label": "A", "description": "First"}, {"label": "B", "description": "Second"}},
+			}}},
+		}),
+	}
+	opts := ExecOptions{RequestUserInput: func(_ context.Context, req PendingInputRequest) (PendingInputAnswer, error) {
+		requests <- req
+		return PendingInputAnswer{
+			Answers: map[string][]string{req.Questions[0].ID: {"A", "B"}},
+			OnDelivered: func(context.Context) error {
+				acked <- written.Len() > 0
+				return nil
+			},
+		}, nil
+	}}
+
+	coordinator := newPendingInputCoordinator()
+	if !b.handleUserInputControlRequest(context.Background(), msg, &written, opts, statuses, coordinator) {
+		t.Fatal("request_user_dialog was not handled")
+	}
+	if !b.handleUserInputControlRequest(context.Background(), msg, &written, opts, statuses, coordinator) {
+		t.Fatal("replayed request_user_dialog was not handled")
+	}
+	select {
+	case wroteFirst := <-acked:
+		if !wroteFirst {
+			t.Fatal("delivery acknowledged before native write")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("native response was not acknowledged")
+	}
+	req := <-requests
+	if !req.Blocking || len(req.Questions) != 1 || !req.Questions[0].MultiSelect {
+		t.Fatalf("unexpected normalized request: %+v", req)
+	}
+	for _, want := range []string{"waiting_for_input", "running"} {
+		if got := (<-statuses).Status; got != want {
+			t.Fatalf("status = %q, want %q", got, want)
+		}
+	}
+	var response struct {
+		Response struct {
+			RequestID string `json:"request_id"`
+			Response  struct {
+				Answers map[string]string `json:"answers"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Response.Response.Answers["Which paths?"]; got != "A, B" {
+		t.Fatalf("native answer = %q, want %q", got, "A, B")
+	}
+	if got := strings.Count(written.String(), "\n"); got != 1 {
+		t.Fatalf("native response writes = %d, want 1", got)
+	}
+}
+
+func TestClaudeRequestUserInputRejectsDuplicateQuestionText(t *testing.T) {
+	t.Parallel()
+
+	var written bytes.Buffer
+	called := false
+	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
+	msg := claudeSDKMessage{RequestID: "request-duplicate", Request: mustMarshal(t, map[string]any{
+		"subtype": "request_user_dialog", "dialog_kind": "permission_ask_user_question", "tool_use_id": "tool-duplicate",
+		"payload": map[string]any{"questions": []map[string]any{
+			{"question": "Same?", "header": "One", "options": []map[string]string{{"label": "A"}}},
+			{"question": "Same?", "header": "Two", "options": []map[string]string{{"label": "B"}}},
+		}},
+	})}
+	if !b.handleUserInputControlRequest(context.Background(), msg, &written, ExecOptions{
+		RequestUserInput: func(context.Context, PendingInputRequest) (PendingInputAnswer, error) {
+			called = true
+			return PendingInputAnswer{}, nil
+		},
+	}, nil) {
+		t.Fatal("request_user_dialog was not handled")
+	}
+	if called {
+		t.Fatal("duplicate question text reached callback")
+	}
+	if !strings.Contains(written.String(), `"subtype":"error"`) {
+		t.Fatalf("duplicate question text did not receive native error: %s", written.String())
+	}
+}
+
+func TestClaudeRequestUserInputRejectsUnknownSecretAndNonBlockingDialogs(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		request map[string]any
+	}{
+		{name: "unknown kind", request: map[string]any{
+			"subtype": "request_user_dialog", "dialog_kind": "secret_prompt",
+			"payload": map[string]any{"questions": []map[string]any{{"question": "Secret?"}}},
+		}},
+		{name: "explicit secret", request: map[string]any{
+			"subtype": "request_user_dialog", "dialog_kind": "permission_ask_user_question",
+			"payload": map[string]any{"isSecret": true, "questions": []map[string]any{{"question": "Secret?"}}},
+		}},
+		{name: "explicit nonblocking", request: map[string]any{
+			"subtype": "request_user_dialog", "dialog_kind": "permission_ask_user_question", "blocking": false,
+			"payload": map[string]any{"questions": []map[string]any{{"question": "Continue?"}}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var written bytes.Buffer
+			called := false
+			b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
+			handled := b.handleUserInputControlRequest(context.Background(), claudeSDKMessage{
+				RequestID: "request-rejected", Request: mustMarshal(t, tc.request),
+			}, &written, ExecOptions{RequestUserInput: func(context.Context, PendingInputRequest) (PendingInputAnswer, error) {
+				called = true
+				return PendingInputAnswer{}, nil
+			}}, nil)
+			if !handled || called || !strings.Contains(written.String(), `"subtype":"error"`) {
+				t.Fatalf("handled=%v called=%v response=%s", handled, called, written.String())
+			}
+		})
+	}
+}
+
 func TestBuildClaudeArgsUsesStrictMCPForManagedConfig(t *testing.T) {
 	t.Parallel()
 

@@ -19,9 +19,13 @@ import (
 )
 
 const (
-	DefaultServerURL         = "ws://localhost:8080/ws"
-	DefaultPollInterval      = 30 * time.Second
-	DefaultHeartbeatInterval = 15 * time.Second
+	DefaultServerURL    = "ws://localhost:8080/ws"
+	DefaultPollInterval = 30 * time.Second
+	// DefaultWSClaimPollInterval is the upper bound for missed-event safety
+	// polls while task availability and claims use a healthy WebSocket. The
+	// poller applies downward-only jitter before each sleep.
+	DefaultWSClaimPollInterval = 3 * time.Minute
+	DefaultHeartbeatInterval   = 15 * time.Second
 	// DefaultAgentTimeout is the optional absolute wall-clock cap on a single
 	// agent run. 0 = no cap: a run is bounded only by the inactivity watchdog
 	// (DefaultAgentIdleWatchdog), so a session that keeps emitting events is
@@ -29,6 +33,7 @@ const (
 	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
+	DefaultCodexInFlightToolTimeout       = 2 * time.Hour
 	DefaultCodexHandshakeTimeout          = 30 * time.Second
 	DefaultCodexThreadHandshakeTimeout    = 60 * time.Second
 	// DefaultOpenCodeIdleWatchdog shortens the no-message budget for OpenCode
@@ -101,6 +106,7 @@ type Config struct {
 	DeviceName                     string
 	RuntimeName                    string
 	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
+	CLICommit                      string                // build commit injected by the CLI; empty when unknown
 	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
 	Profile                        string                // profile name (empty = default)
 	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, codearts, deveco, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro, antigravity, qoder, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, zeroclaw (plus built-in runtime identities from agent.BuiltinRuntimes, e.g. omp)
@@ -130,9 +136,11 @@ type Config struct {
 	AutoUpdateCheckInterval        time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
 	AutoReloadEnabled              bool                  // restart when the multica binary on disk no longer matches the running version (default: true for CLI-launched daemons)
 	PollInterval                   time.Duration
+	WSClaimPollInterval            time.Duration // upper bound for healthy WS batch-claim safety polls; actual sleeps use downward-only jitter
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
 	CodexSemanticInactivityTimeout time.Duration
+	CodexInFlightToolTimeout       time.Duration
 	// CodexFirstTurnNoProgressTimeout is an explicit override for the Codex
 	// first-turn no-progress ceiling (MULTICA_CODEX_FIRST_TURN_TIMEOUT). 0 means
 	// unset: the backend keeps its default ceiling, which CodexSemanticInactivityTimeout
@@ -144,7 +152,10 @@ type Config struct {
 	OpenCodeIdleWatchdog            time.Duration // OpenCode-specific no-message window; 0 falls back to AgentIdleWatchdog and values above it cannot extend the global bound
 	AgentIdleWatchdog               time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
 	AgentToolWatchdog               time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = never force-stop during a tool call); defaults to AgentIdleWatchdog, so operators tune one number unless they deliberately want a wider tool budget
-	DirectAgentMode                 bool          // skip Multica prompt/runtime injection and pass only the task's user input to the configured agent (default: false; MULTICA_DIRECT_AGENT_MODE)
+	DirectAgentMode                 bool          // skip the full runtime brief while retaining task input, privacy, identity, and repository safety context (default: false; MULTICA_DIRECT_AGENT_MODE)
+	ConciseOptimization             bool          // add tool-preparation and orchestration guidance to concise operational prompts (default: false; MULTICA_CONCISE_OPTIMIZATION)
+	ConciseMaxTurns                 int           // cap agent turns for task-level concise-mode runs (default: 40; 0 = uncapped; MULTICA_CONCISE_MAX_TURNS). Enforced only by backends that consume ExecOptions.MaxTurns (claude, codebuddy); others ignore or warn.
+	ConciseMaxToolCalls             int           // cap tool calls for task-level concise-mode runs on backends with no native turn limit (default: 120; 0 = uncapped; MULTICA_CONCISE_MAX_TOOL_CALLS). Daemon-side enforcement: the run is force-stopped when the count is reached. Raised from 15/40 after real exploration tasks (repo mapping, multi-repo surveys) kept exhausting 40 calls mid-investigation.
 	ClaudeArgs                      []string
 	CodexArgs                       []string
 	CodebuddyArgs                   []string
@@ -163,10 +174,11 @@ type Config struct {
 // Overrides allows CLI flags to override environment variables and defaults.
 // Zero values are ignored and the env/default value is used instead.
 type Overrides struct {
-	ServerURL         string
-	WorkspacesRoot    string
-	PollInterval      time.Duration
-	HeartbeatInterval time.Duration
+	ServerURL           string
+	WorkspacesRoot      string
+	PollInterval        time.Duration
+	WSClaimPollInterval time.Duration
+	HeartbeatInterval   time.Duration
 	// AgentTimeout is a pointer so an explicit `--agent-timeout 0` (no cap) is
 	// distinguishable from "flag not passed". nil = use env/default.
 	AgentTimeout                   *time.Duration
@@ -307,6 +319,16 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if overrides.PollInterval > 0 {
 		pollInterval = overrides.PollInterval
 	}
+	wsClaimPollInterval, err := durationFromEnv("MULTICA_DAEMON_WS_CLAIM_POLL_INTERVAL", DefaultWSClaimPollInterval)
+	if err != nil {
+		return Config{}, err
+	}
+	if overrides.WSClaimPollInterval > 0 {
+		wsClaimPollInterval = overrides.WSClaimPollInterval
+	}
+	if wsClaimPollInterval <= 0 {
+		return Config{}, fmt.Errorf("MULTICA_DAEMON_WS_CLAIM_POLL_INTERVAL must be positive (got %s)", wsClaimPollInterval)
+	}
 
 	heartbeatInterval, err := durationFromEnv("MULTICA_DAEMON_HEARTBEAT_INTERVAL", DefaultHeartbeatInterval)
 	if err != nil {
@@ -362,38 +384,31 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Codex runs a semantic-inactivity timer of its own inside the app-server
-	// protocol, and unlike the daemon's watchdog it is NOT tool-aware: a
-	// commandExecution that emits nothing for the whole window trips it even
-	// though a tool is plainly in flight. That one timer therefore stands in
-	// for BOTH daemon watchdogs on a Codex run, so it has to be sized like the
-	// larger of them — otherwise a quiet test suite or an output-buffering
-	// `docker build` dies at the Codex ceiling long before the daemon budget
-	// that was supposed to protect it, and "we raised the budget to 2h" is
-	// simply false for Codex users.
-	//
-	// A tool budget of 0 means "never force-stop while a tool is in flight",
-	// which this timer cannot express — it has no way to see the tool. It falls
-	// back to the idle budget rather than running unbounded, which is the
-	// conservative reading.
-	//
-	// When the whole watchdog suite is disabled (idle = 0), Codex keeps its own
-	// built-in default. Disabling the daemon's watchdogs has never disabled this
-	// timer, and quietly turning it into "unbounded" here would be a much larger
-	// change than this one.
-	codexSemanticDefault := agentIdleWatchdog
-	if agentToolWatchdog > codexSemanticDefault {
-		codexSemanticDefault = agentToolWatchdog
+	// Codex pauses semantic inactivity while a tool is in flight. Keep semantic
+	// inactivity independent and short, while transporting the previous
+	// effective long-tool ceiling separately to the backend.
+	legacyCodexSemanticDefault := agentIdleWatchdog
+	if agentToolWatchdog > legacyCodexSemanticDefault {
+		legacyCodexSemanticDefault = agentToolWatchdog
 	}
-	if codexSemanticDefault <= 0 {
-		codexSemanticDefault = DefaultCodexSemanticInactivityTimeout
+	if legacyCodexSemanticDefault <= 0 {
+		legacyCodexSemanticDefault = DefaultCodexSemanticInactivityTimeout
 	}
-	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", codexSemanticDefault)
+	legacyCodexSemanticTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", legacyCodexSemanticDefault)
+	if err != nil {
+		return Config{}, err
+	}
+	codexSemanticInactivityTimeout, err := durationFromEnv("MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT", DefaultCodexSemanticInactivityTimeout)
 	if err != nil {
 		return Config{}, err
 	}
 	if overrides.CodexSemanticInactivityTimeout > 0 {
 		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
+		legacyCodexSemanticTimeout = overrides.CodexSemanticInactivityTimeout
+	}
+	codexInFlightToolTimeout := legacyCodexSemanticTimeout
+	if codexInFlightToolTimeout < DefaultCodexInFlightToolTimeout {
+		codexInFlightToolTimeout = DefaultCodexInFlightToolTimeout
 	}
 
 	// 0 = unset: the codex backend keeps its default first-turn ceiling. A
@@ -604,7 +619,21 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// agent calls. It is intentionally opt-in because direct mode also bypasses
 	// the workflow that reads the issue, updates status, and posts the result.
 	directAgentMode := boolFromEnv("MULTICA_DIRECT_AGENT_MODE", false)
-
+	conciseOptimization := boolFromEnv("MULTICA_CONCISE_OPTIMIZATION", false)
+	// Concise-mode caps. Only consulted for task.ConciseMode runs — the
+	// daemon-wide DirectAgentMode default deliberately does NOT inherit them.
+	conciseMaxTurns, err := intFromEnv("MULTICA_CONCISE_MAX_TURNS", 40)
+	if err != nil {
+		return Config{}, err
+	}
+	// Daemon-side tool-call budget for backends whose CLI/protocol has no
+	// native turn limit (codex, pi/omp, openclaw, grok). Distinct from
+	// ConciseMaxTurns on purpose: one agent turn may issue several tool
+	// calls, so the two numbers are not interchangeable.
+	conciseMaxToolCalls, err := intFromEnv("MULTICA_CONCISE_MAX_TOOL_CALLS", 120)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		ServerBaseURL:                   serverBaseURL,
 		DaemonID:                        daemonID,
@@ -636,19 +665,24 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		AutoUpdateEnabled:               autoUpdateEnabled,
 		AutoUpdateCheckInterval:         autoUpdateInterval,
 		AutoReloadEnabled:               autoReloadEnabled,
+		DirectAgentMode:                 directAgentMode,
+		ConciseOptimization:             conciseOptimization,
 		HealthPort:                      healthPort,
 		MaxConcurrentTasks:              maxConcurrentTasks,
 		PollInterval:                    pollInterval,
+		WSClaimPollInterval:             wsClaimPollInterval,
 		HeartbeatInterval:               heartbeatInterval,
 		AgentTimeout:                    agentTimeout,
 		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
+		CodexInFlightToolTimeout:        codexInFlightToolTimeout,
 		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
 		CodexHandshakeTimeout:           codexHandshakeTimeout,
 		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,
 		OpenCodeIdleWatchdog:            openCodeIdleWatchdog,
 		AgentIdleWatchdog:               agentIdleWatchdog,
 		AgentToolWatchdog:               agentToolWatchdog,
-		DirectAgentMode:                 directAgentMode,
+		ConciseMaxTurns:                 conciseMaxTurns,
+		ConciseMaxToolCalls:             conciseMaxToolCalls,
 		ClaudeArgs:                      claudeArgs,
 		CodexArgs:                       codexArgs,
 		CodebuddyArgs:                   codebuddyArgs,
@@ -733,6 +767,11 @@ func NormalizeServerBaseURL(raw string) (string, error) {
 // $HOME and the --profile name, so a task hosted by a named-profile daemon
 // would otherwise scan the default root and silently report the wrong tree.
 const TaskWorkspacesRootEnv = "MULTICA_TASK_WORKSPACES_ROOT"
+
+// TaskCLIPathEnv carries the absolute path of the multica binary the daemon
+// itself runs, so an agent can invoke that exact binary even when its shell
+// resolves `multica` to a stale install elsewhere on PATH.
+const TaskCLIPathEnv = "MULTICA_CLI"
 
 // ResolveWorkspacesRoot returns the absolute path that the daemon and CLI
 // should treat as the workspaces root. Resolution order: explicit override >

@@ -25,6 +25,7 @@ import {
 import { KpiCard } from "../../runtimes/components/shared";
 import { useStatusLabel, useTriggerText } from "./task-run-labels";
 import { TaskStatusIcon } from "./task-status-icon";
+import { useUsageAmountFormatter } from "./use-usage-amount-formatter";
 
 // Per-run cost breakdown for one issue — the surface the execution log's
 // header total opens.
@@ -49,6 +50,7 @@ export function IssueUsageDialog({
   tasks: AgentTask[];
 }) {
   const { t } = useT("issues");
+  const formatAmount = useUsageAmountFormatter();
   // `estimateCost` reads custom rates imperatively out of the Zustand store,
   // so nothing re-renders this dialog when the user saves a new rate. Subscribe
   // to the snapshot and carry it into every memo that prices usage — otherwise
@@ -101,7 +103,7 @@ export function IssueUsageDialog({
           5xl rather than 4xl because nine columns plus the token bar need
           ~920px: at 4xl the Cost column — the one people open this for —
           landed outside the scroll viewport. */}
-      <DialogContent className="!max-w-5xl !w-[calc(100vw-4rem)]">
+      <DialogContent className="!max-w-5xl !w-[calc(100vw-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t(($) => $.usage_detail.title)}</DialogTitle>
           <DialogDescription>
@@ -123,17 +125,17 @@ export function IssueUsageDialog({
              past the dialog's own max-width, and every sibling (KPI cards,
              by-agent bars, footnotes) stretches with it and paints outside
              the box. */
-          <div className="flex min-w-0 flex-col gap-5">
-            <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
+          <div className="@container/usage-detail flex min-w-0 flex-col gap-5">
+            <div className="grid grid-cols-1 divide-y rounded-lg border bg-card @min-[40rem]/usage-detail:grid-cols-3 @min-[40rem]/usage-detail:divide-x @min-[40rem]/usage-detail:divide-y-0 [&_.text-display]:text-title-lg [&_.text-display]:leading-tight [&_.text-display]:[overflow-wrap:anywhere]">
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cost)}
-                value={formatUsd(total.cost)}
+                value={formatAmount(total.cost, total.costComplete)}
                 hint={<CostConcentrationHint tasks={priced} total={total} />}
               />
               <KpiCard
                 label={t(($) => $.usage_detail.kpi_cache)}
-                value={formatUsd(total.cacheSavings)}
-                accent={total.cacheSavings > 0 ? "success" : "default"}
+                value={formatAmount(total.cacheSavings, total.cacheSavingsComplete)}
+                accent={total.cacheSavingsComplete && total.cacheSavings > 0 ? "success" : "default"}
                 hint={t(($) => $.usage_detail.kpi_cache_hint, {
                   pct: cacheHitRate,
                   reads: formatTokens(total.cacheRead),
@@ -149,7 +151,7 @@ export function IssueUsageDialog({
               />
             </div>
 
-            {agentIds.length > 1 && (
+            {total.costComplete && agentIds.length > 1 && (
               <CostByAgent tasks={priced} agentIds={agentIds} total={total} />
             )}
 
@@ -185,7 +187,7 @@ function CostConcentrationHint({
 }) {
   const { t } = useT("issues");
   const failed = tasks.filter((task) => task.status === "failed");
-  if (failed.length === 0 || total.cost <= 0) return null;
+  if (!total.costComplete || failed.length === 0 || total.cost <= 0) return null;
 
   const failedCost = failed.reduce(
     (sum, task) => sum + (summarizeTaskUsage(task.usage)?.cost ?? 0),
@@ -272,6 +274,7 @@ function CostByAgent({
 
 function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummary }) {
   const { t } = useT("issues");
+  const formatAmount = useUsageAmountFormatter();
   const maxTokens = tasks.reduce(
     (m, task) => Math.max(m, summarizeTaskUsage(task.usage)?.tokens ?? 0),
     0,
@@ -315,7 +318,7 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
             <td>{formatTokens(total.cacheRead)}</td>
             <td>{formatTokens(total.cacheWrite)}</td>
             <td className="!pr-16">{formatTokens(total.tokens)}</td>
-            <td className="!pr-0">{formatUsd(total.cost)}</td>
+            <td className="!pr-0">{formatAmount(total.cost, total.costComplete)}</td>
           </tr>
         </tfoot>
       </table>
@@ -325,6 +328,7 @@ function RunTable({ tasks, total }: { tasks: AgentTask[]; total: TaskUsageSummar
 
 function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
   const { t } = useT("issues");
+  const formatAmount = useUsageAmountFormatter();
   const trigger = useTriggerText(task);
   const statusLabel = useStatusLabel(task.status);
   const summary = summarizeTaskUsage(task.usage);
@@ -386,7 +390,7 @@ function RunRow({ task, maxTokens }: { task: AgentTask; maxTokens: number }) {
           </span>
         </div>
       </td>
-      <td className="!pr-0 font-medium">{formatUsd(summary.cost)}</td>
+      <td className="!pr-0 font-medium">{formatAmount(summary.cost, summary.costComplete)}</td>
     </tr>
   );
 }

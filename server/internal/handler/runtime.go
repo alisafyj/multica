@@ -47,6 +47,10 @@ type AgentRuntimeResponse struct {
 	LastSeenAt *string `json:"last_seen_at"`
 	CreatedAt  string  `json:"created_at"`
 	UpdatedAt  string  `json:"updated_at"`
+	// TestHostEnabled marks the machine as a test host: a device round
+	// (android_device / ios_device) is only dispatched to an agent whose
+	// runtime has it on. See migration 914 and DispatchTestRun.
+	TestHostEnabled bool `json:"test_host_enabled"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -59,23 +63,24 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 
 	return AgentRuntimeResponse{
-		ID:           uuidToString(rt.ID),
-		WorkspaceID:  uuidToString(rt.WorkspaceID),
-		DaemonID:     textToPtr(rt.DaemonID),
-		Name:         rt.Name,
-		CustomName:   textToPtr(rt.CustomName),
-		RuntimeMode:  rt.RuntimeMode,
-		Provider:     rt.Provider,
-		LaunchHeader: agent.LaunchHeader(rt.Provider),
-		Status:       rt.Status,
-		DeviceInfo:   rt.DeviceInfo,
-		Metadata:     metadata,
-		OwnerID:      uuidToPtr(rt.OwnerID),
-		Visibility:   rt.Visibility,
-		ProfileID:    uuidToPtr(rt.ProfileID),
-		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
-		CreatedAt:    timestampToString(rt.CreatedAt),
-		UpdatedAt:    timestampToString(rt.UpdatedAt),
+		ID:              uuidToString(rt.ID),
+		WorkspaceID:     uuidToString(rt.WorkspaceID),
+		DaemonID:        textToPtr(rt.DaemonID),
+		Name:            rt.Name,
+		CustomName:      textToPtr(rt.CustomName),
+		RuntimeMode:     rt.RuntimeMode,
+		Provider:        rt.Provider,
+		LaunchHeader:    agent.LaunchHeader(rt.Provider),
+		Status:          rt.Status,
+		DeviceInfo:      rt.DeviceInfo,
+		Metadata:        metadata,
+		OwnerID:         uuidToPtr(rt.OwnerID),
+		Visibility:      rt.Visibility,
+		TestHostEnabled: rt.TestHostEnabled,
+		ProfileID:       uuidToPtr(rt.ProfileID),
+		LastSeenAt:      timestampToPtr(rt.LastSeenAt),
+		CreatedAt:       timestampToString(rt.CreatedAt),
+		UpdatedAt:       timestampToString(rt.UpdatedAt),
 	}
 }
 
@@ -473,6 +478,9 @@ type UpdateAgentRuntimeRequest struct {
 	// runtime per provider) instead of just this one. Ignored when the
 	// runtime has no daemon_id.
 	ApplyToMachine bool `json:"apply_to_machine,omitempty"`
+	// TestHostEnabled designates (or undesignates) the machine as a test
+	// host for device rounds. Owner / workspace admin, like the rest.
+	TestHostEnabled *bool `json:"test_host_enabled,omitempty"`
 }
 
 // maxRuntimeCustomNameLen caps a runtime's custom name. Default names are
@@ -609,6 +617,27 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 			rt = updated
 			changed = true
+		}
+	}
+
+	if req.TestHostEnabled != nil && *req.TestHostEnabled != rt.TestHostEnabled {
+		updated, err := h.Queries.UpdateAgentRuntimeTestHost(r.Context(), db.UpdateAgentRuntimeTestHostParams{
+			TestHostEnabled: *req.TestHostEnabled,
+			ID:              runtimeUUID,
+		})
+		if err != nil {
+			slog.Error("UpdateAgentRuntimeTestHost failed", "error", err, "runtime_id", runtimeID)
+			writeError(w, http.StatusInternalServerError, "failed to update runtime")
+			return
+		}
+		rt = updated
+		changed = true
+		if rt.TestHostEnabled {
+			// A fresh inventory right away, so the phones the hub already
+			// has show up without waiting for the next change on the hub.
+			if _, err := h.CapabilityScanStore.Create(r.Context(), runtimeID); err == nil {
+				h.requestDaemonPendingWork(runtimeID, "capability_scan")
+			}
 		}
 	}
 
@@ -954,6 +983,7 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
 	}
+	h.NotifyRuntimeGone(uuidToString(rt.ID))
 
 	slog.Info("runtime deleted",
 		"runtime_id", uuidToString(rt.ID),
@@ -1167,6 +1197,7 @@ func (h *Handler) UnbindAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
+	h.NotifyRuntimeGone(uuidToString(rt.ID))
 
 	h.publishRuntimeTeardown(r.Context(), teardown, wsID, userID)
 
@@ -1222,4 +1253,53 @@ func activeAgentSetMatches(current []db.Agent, expected map[string]struct{}) boo
 		}
 	}
 	return true
+}
+
+// runtimeDeviceHubResponse is GET /api/runtimes/{id}/device-hub: what the
+// daemon last reported about the multica-device-mcp hub on the machine.
+// Pairing fields are only filled for people who may edit the runtime; the
+// code lets anyone on the LAN pair a phone into that hub.
+type runtimeDeviceHubResponse struct {
+	Reachable   bool    `json:"reachable"`
+	URL         string  `json:"url"`
+	Version     string  `json:"version"`
+	Adb         bool    `json:"adb"`
+	Devices     int     `json:"devices"`
+	Phones      int     `json:"phones"`
+	Leases      int     `json:"leases"`
+	PairingURL  *string `json:"pairing_url"`
+	PairingCode *string `json:"pairing_code"`
+	ReportedAt  *string `json:"reported_at"`
+}
+
+func (h *Handler) GetRuntimeDeviceHub(w http.ResponseWriter, r *http.Request) {
+	rt, member, ok := h.requireRuntimeReadAccess(w, r, obsmetrics.RuntimeLookupSourceTestCapability, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	report, err := h.DeviceHubStore.Get(r.Context(), effectiveDaemonIDForRuntime(rt))
+	if err != nil {
+		slog.Warn("GetRuntimeDeviceHub: store read failed", "runtime_id", uuidToString(rt.ID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to read the device hub state")
+		return
+	}
+	resp := runtimeDeviceHubResponse{}
+	if report != nil {
+		resp.Reachable = report.Reachable
+		resp.URL = report.URL
+		resp.Version = report.Version
+		resp.Adb = report.Adb
+		resp.Devices = report.Devices
+		resp.Phones = report.Phones
+		resp.Leases = report.Leases
+		reportedAt := report.ReportedAt.UTC().Format(time.RFC3339)
+		resp.ReportedAt = &reportedAt
+		if canEditRuntime(member, rt) && report.PairingURL != "" {
+			pairingURL := report.PairingURL
+			pairingCode := report.PairingCode
+			resp.PairingURL = &pairingURL
+			resp.PairingCode = &pairingCode
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

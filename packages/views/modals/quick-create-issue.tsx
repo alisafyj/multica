@@ -12,16 +12,15 @@ import {
   MoreHorizontal,
   Settings2,
   X as XIcon,
+  Zap,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { DialogTitle } from "@multica/ui/components/ui/dialog";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Button } from "@multica/ui/components/ui/button";
@@ -48,6 +47,7 @@ import {
   checkQuickCreateCliVersion,
   checkQuickCreateFieldsCliVersion,
   readRuntimeCliVersion,
+  type CliVersionCheck,
 } from "@multica/core/runtimes";
 import { useShortcut } from "@multica/core/shortcuts";
 import { ShortcutKeycaps } from "../common/shortcut-keycaps";
@@ -103,6 +103,15 @@ type ActorSelection =
 // description + agent across the agent→manual flip; project_id rides through
 // the same carry channel manual→agent uses, so the manual panel reads it
 // from `data?.project_id` without a parallel store.
+function applyAttestedQuickCreateCapability(
+  fallback: CliVersionCheck,
+  supported: boolean | undefined,
+): CliVersionCheck {
+  if (supported === undefined) return fallback;
+  if (supported) return { ...fallback, state: "ok" };
+  return { ...fallback, state: "missing", current: "" };
+}
+
 export function AgentCreatePanel({
   onClose,
   onSwitchMode,
@@ -323,7 +332,13 @@ export function AgentCreatePanel({
     setActiveMode("agent");
   }, [setActiveMode]);
 
-  // Daemon CLI version gate. The agent-create flow needs the runtime's
+  // Daemon CLI capability gate. New servers project the authoritative result
+  // on the authorized agent response, so a member does not need visibility
+  // into another user's private runtime metadata. Older servers omit those
+  // fields and continue through the legacy runtime-version check below when
+  // that runtime is visible; otherwise the server remains the trust boundary.
+  //
+  // The agent-create flow needs the runtime's
   // bundled multica CLI to be ≥ MIN_QUICK_CREATE_CLI_VERSION; older
   // daemons handle attachments and partial-failure retries incorrectly
   // (see PR #1851 / MUL-1496). Pre-check on the picker so the user gets
@@ -340,6 +355,16 @@ export function AgentCreatePanel({
         : undefined,
     [runtimes, selectedAgent?.runtime_id],
   );
+  // We can only pre-check a version we can actually see. A non-admin member's
+  // runtime list (ListVisibleAgentRuntimes) omits other members' private
+  // machines, so a selected agent bound to such a runtime yields no row here.
+  // That absence is "unknown version", NOT "daemon reported no version": the
+  // two must not collapse, or the member gets the misleading "upgrade your
+  // daemon" wall for a runtime that is in fact new enough (#7633). When we
+  // can't pre-check, defer to the server's authoritative gate
+  // (checkQuickCreateDaemonVersion, which reads the row by id regardless of
+  // role) instead of failing closed in the UI.
+  const canPrecheckVersion = selectedAgent?.runtime_id != null && selectedRuntime != null;
   const runtimeCliVersion = readRuntimeCliVersion(selectedRuntime?.metadata);
   const baseVersionCheck = useMemo(
     () => checkQuickCreateCliVersion(runtimeCliVersion),
@@ -349,11 +374,36 @@ export function AgentCreatePanel({
     () => checkQuickCreateFieldsCliVersion(runtimeCliVersion),
     [runtimeCliVersion],
   );
+  const effectiveBaseVersionCheck = useMemo(
+    () =>
+      applyAttestedQuickCreateCapability(
+        baseVersionCheck,
+        selectedAgent?.quick_create_supported,
+      ),
+    [baseVersionCheck, selectedAgent?.quick_create_supported],
+  );
+  const effectiveFieldVersionCheck = useMemo(
+    () =>
+      applyAttestedQuickCreateCapability(
+        fieldVersionCheck,
+        selectedAgent?.quick_create_fields_supported,
+      ),
+    [fieldVersionCheck, selectedAgent?.quick_create_fields_supported],
+  );
   const usesExplicitFields = priority !== "none" || dueDate !== null;
-  const versionCheck = usesExplicitFields ? fieldVersionCheck : baseVersionCheck;
+  const versionCheck = usesExplicitFields
+    ? effectiveFieldVersionCheck
+    : effectiveBaseVersionCheck;
+  const canEvaluateBaseVersion =
+    selectedAgent?.quick_create_supported !== undefined || canPrecheckVersion;
+  const canEvaluateFieldVersion =
+    selectedAgent?.quick_create_fields_supported !== undefined ||
+    canPrecheckVersion;
   const versionBlocked =
-    baseVersionCheck.state !== "ok" ||
-    (usesExplicitFields && fieldVersionCheck.state !== "ok");
+    (canEvaluateBaseVersion && effectiveBaseVersionCheck.state !== "ok") ||
+    (usesExplicitFields &&
+      canEvaluateFieldVersion &&
+      effectiveFieldVersionCheck.state !== "ok");
 
   const initialPrompt = draft.agent.prompt || (data?.prompt as string) || "";
   // The editor is uncontrolled — we read the latest markdown via the ref at
@@ -657,6 +707,8 @@ export function AgentCreatePanel({
               setAgent({ actorType: next.type, actorId: next.id });
               setError(null);
             }}
+            conciseMode={conciseMode}
+            onConciseModeChange={(checked) => setAgent({ conciseMode: checked })}
             t={t}
           />
         </div>
@@ -810,15 +862,6 @@ export function AgentCreatePanel({
                   {t(($) => $.create_issue.agent.set_due_date)}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuCheckboxItem
-                checked={conciseMode}
-                aria-label={t(($) => $.create_issue.agent.concise_mode_aria)}
-                title={t(($) => $.create_issue.agent.concise_mode_description)}
-                onCheckedChange={(checked) => setAgent({ conciseMode: checked === true })}
-              >
-                {t(($) => $.create_issue.agent.concise_mode)}
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuSeparator />
               <DropdownMenuItem
                 render={
                   <AppLink
@@ -946,6 +989,8 @@ function ActorPicker({
   selectedAgent,
   selectedSquad,
   onPick,
+  conciseMode,
+  onConciseModeChange,
   t,
 }: {
   actor: ActorSelection | null;
@@ -954,6 +999,8 @@ function ActorPicker({
   selectedAgent: Agent | undefined;
   selectedSquad: Squad | undefined;
   onPick: (next: ActorSelection) => void;
+  conciseMode: boolean;
+  onConciseModeChange: (checked: boolean) => void;
   t: ReturnType<typeof useT<"modals">>["t"];
 }) {
   const [open, setOpen] = useState(false);
@@ -1004,6 +1051,24 @@ function ActorPicker({
             <span>{t(($) => $.create_issue.agent.pick_an_agent)}</span>
           )}
         </span>
+      }
+      footer={
+        // Outside the arrow-key listbox on purpose: mode is a creation-time
+        // option, not another actor to keyboard through.
+        <label
+          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-caption text-muted-foreground hover:bg-accent transition-colors"
+          title={t(($) => $.create_issue.agent.concise_mode_description)}
+        >
+          <input
+            type="checkbox"
+            checked={conciseMode}
+            aria-label={t(($) => $.create_issue.agent.concise_mode_aria)}
+            onChange={(e) => onConciseModeChange(e.target.checked)}
+            className="h-3.5 w-3.5 accent-foreground"
+          />
+          <Zap className="size-3.5" />
+          <span>{t(($) => $.create_issue.agent.concise_mode)}</span>
+        </label>
       }
     >
       {filteredAgents.length === 0 && filteredSquads.length === 0 ? (

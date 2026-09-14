@@ -23,11 +23,7 @@ beforeAll(() => {
 
 describe("comment composer store", () => {
   beforeEach(() => {
-    useCommentComposerStore.setState({ sticky: true });
-  });
-
-  it("defaults to sticky", () => {
-    expect(useCommentComposerStore.getState().sticky).toBe(true);
+    useCommentComposerStore.setState({ sticky: true, concise: false });
   });
 
   it("toggleSticky flips the preference", () => {
@@ -36,5 +32,13 @@ describe("comment composer store", () => {
 
     useCommentComposerStore.getState().toggleSticky();
     expect(useCommentComposerStore.getState().sticky).toBe(true);
+  });
+
+  it("setConcise opts agent runs from this member's comments into concise mode", () => {
+    useCommentComposerStore.getState().setConcise(true);
+    expect(useCommentComposerStore.getState().concise).toBe(true);
+
+    useCommentComposerStore.getState().setConcise(false);
+    expect(useCommentComposerStore.getState().concise).toBe(false);
   });
 });

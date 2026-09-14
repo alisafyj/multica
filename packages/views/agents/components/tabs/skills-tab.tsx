@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Server,
   Trash2,
 } from "lucide-react";
@@ -22,7 +23,6 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import {
   isRuntimeUsableForUser,
   runtimeCapabilitiesOptions,
-  runtimeDisplayLabel,
 } from "@multica/core/runtimes";
 import {
   skillDetailOptions,
@@ -31,6 +31,7 @@ import {
 } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,11 @@ import {
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
 import { Switch } from "@multica/ui/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@multica/ui/components/ui/tooltip";
 import { cn } from "@multica/ui/lib/utils";
 import { SkillAddDialog } from "../skill-add-dialog";
 import { useT } from "../../../i18n";
@@ -73,10 +79,16 @@ export function SkillsTab({
       : null;
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkFailed, setBulkFailed] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState<SelectedSkill>(null);
   const selectedWorkspaceId = selected?.kind === "workspace" ? selected.id : "";
   const detailQuery = useQuery(skillDetailOptions(wsId, selectedWorkspaceId));
+
+  useEffect(() => {
+    setBulkFailed(false);
+  }, [runtimeId]);
 
   const refreshAgent = async () => {
     await qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
@@ -118,7 +130,7 @@ export function SkillsTab({
     skill: RuntimeLocalSkillSummary,
     enabled: boolean,
   ) => {
-    if (!runtime || !skill.root) return;
+    if (!runtime || !skill.root || bulkBusy) return;
     const busyKey = runtimeSkillIdentity(skill);
     setBusyId(busyKey);
     try {
@@ -143,13 +155,116 @@ export function SkillsTab({
   };
 
   const runtimeSkills = runtimeQuery.data?.skills ?? [];
+  const missingDisabledRuntimeSkills =
+    runtimeQuery.isSuccess &&
+    runtimeQuery.data.supported === true &&
+    runtime != null
+      ? (agent.disabled_runtime_skills ?? []).filter(
+          (disabled) =>
+            disabled.runtime_id === runtime.id &&
+            disabled.provider === runtime.provider &&
+            !runtimeSkills.some((skill) =>
+              isRuntimeSkillDisabled([disabled], runtime.id, skill),
+            ),
+        )
+      : [];
+  const controllableRuntimeSkills = runtimeSkills.filter(
+    (skill) => skill.can_disable === true && Boolean(skill.root),
+  );
+  const disabledRuntimeSkillCount = controllableRuntimeSkills.filter((skill) =>
+    isRuntimeSkillDisabled(agent.disabled_runtime_skills, runtimeId ?? undefined, skill),
+  ).length;
+  const allRuntimeSkillsEnabled =
+    controllableRuntimeSkills.length > 0 && disabledRuntimeSkillCount === 0;
+  const allRuntimeSkillsDisabled =
+    controllableRuntimeSkills.length > 0 &&
+    disabledRuntimeSkillCount === controllableRuntimeSkills.length;
+
+  const handleRuntimeBulkToggle = async (enabled: boolean) => {
+    if (!runtime || bulkBusy) return;
+    const targetSkills = controllableRuntimeSkills.filter(
+      (skill) =>
+        isRuntimeSkillDisabled(
+          agent.disabled_runtime_skills,
+          runtime.id,
+          skill,
+        ) === enabled,
+    );
+    setBulkBusy(true);
+    setBulkFailed(false);
+    let failed = false;
+    let firstFailureMessage: string | undefined;
+    for (const skill of targetSkills) {
+      try {
+        await api.setAgentRuntimeSkillEnabled(agent.id, {
+          runtime_id: runtime.id,
+          root: skill.root!,
+          key: skill.key,
+          name: skill.name,
+          plugin: skill.plugin,
+          enabled,
+        });
+      } catch (error) {
+        failed = true;
+        if (firstFailureMessage === undefined && error instanceof Error) {
+          firstFailureMessage = error.message;
+        }
+      }
+    }
+    try {
+      await refreshAgent();
+    } catch (error) {
+      failed = true;
+      if (firstFailureMessage === undefined && error instanceof Error) {
+        firstFailureMessage = error.message;
+      }
+    }
+    setBulkFailed(failed);
+    setBulkBusy(false);
+    if (failed) {
+      toast.error(
+        firstFailureMessage ??
+          t(($) => $.tab_body.skills.runtime_toggle_failed_toast),
+      );
+    }
+  };
+
+  const handleClearMissingRuntimeSkill = async (
+    disabled: DisabledRuntimeSkill,
+  ) => {
+    if (
+      !runtime ||
+      disabled.runtime_id !== runtime.id ||
+      disabled.provider !== runtime.provider ||
+      bulkBusy
+    ) {
+      return;
+    }
+    const busyKey = missingRuntimeSkillIdentity(disabled);
+    setBusyId(busyKey);
+    try {
+      await api.setAgentRuntimeSkillEnabled(agent.id, {
+        runtime_id: disabled.runtime_id,
+        root: disabled.root,
+        key: disabled.key,
+        name: disabled.name ?? disabled.key,
+        plugin: disabled.plugin,
+        enabled: true,
+      });
+      await refreshAgent();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t(($) => $.tab_body.skills.runtime_clear_saved_failed_toast),
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div className="space-y-8">
-      <p className="text-body leading-6 text-muted-foreground">
-        {t(($) => $.tab_body.skills.intro)}
-      </p>
-
       <CapabilitySection
         title={t(($) => $.tab_body.skills.assigned_title)}
         description={t(($) => $.tab_body.skills.assigned_hint)}
@@ -238,25 +353,47 @@ export function SkillsTab({
 
       <CapabilitySection
         title={t(($) => $.tab_body.skills.runtime_title)}
-        description={t(($) => $.tab_body.skills.runtime_hint, {
-          runtime: runtime ? runtimeDisplayLabel(runtime) : "Runtime",
-        })}
         action={
           runtimeId ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => runtimeQuery.refetch()}
-              disabled={runtimeQuery.isFetching}
-            >
-              <RefreshCw
-                className={cn(
-                  "h-3.5 w-3.5",
-                  runtimeQuery.isFetching && "animate-spin motion-reduce:animate-none",
+            <div className="flex items-center gap-3">
+              {canEdit &&
+                runtimeQuery.data?.supported === true &&
+                controllableRuntimeSkills.length > 0 && (
+                  <span className="flex items-center gap-2">
+                    <Checkbox
+                      checked={allRuntimeSkillsEnabled}
+                      indeterminate={
+                        !allRuntimeSkillsEnabled && !allRuntimeSkillsDisabled
+                      }
+                      onCheckedChange={(checked) =>
+                        handleRuntimeBulkToggle(checked === true)
+                      }
+                      disabled={bulkBusy || busyId !== null}
+                      aria-invalid={bulkFailed || undefined}
+                      aria-label={t(
+                        ($) => $.tab_body.skills.runtime_bulk_toggle_aria,
+                      )}
+                    />
+                    {bulkBusy && (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
+                    )}
+                  </span>
                 )}
-              />
-              {t(($) => $.tab_body.skills.refresh_action)}
-            </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => runtimeQuery.refetch()}
+                disabled={runtimeQuery.isFetching || bulkBusy}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    runtimeQuery.isFetching && "animate-spin motion-reduce:animate-none",
+                  )}
+                />
+                {t(($) => $.tab_body.skills.refresh_action)}
+              </Button>
+            </div>
           ) : null
         }
       >
@@ -282,11 +419,17 @@ export function SkillsTab({
           />
         ) : runtimeQuery.data?.supported !== true ? (
           <RuntimeNotice text={t(($) => $.tab_body.skills.runtime_unsupported)} />
-        ) : runtimeSkills.length === 0 ? (
+        ) : runtimeSkills.length === 0 && missingDisabledRuntimeSkills.length === 0 ? (
           <RuntimeNotice text={t(($) => $.tab_body.skills.runtime_empty)} />
         ) : (
           <ul className="divide-y rounded-lg border bg-surface-raised/40">
             {runtimeSkills.map((skill) => {
+              const savedDisabled = (agent.disabled_runtime_skills ?? []).find(
+                (disabled) =>
+                  disabled.runtime_id === runtime?.id &&
+                  disabled.provider === runtime?.provider &&
+                  isRuntimeSkillDisabled([disabled], runtime?.id, skill),
+              );
               const disabled = isRuntimeSkillDisabled(
                 agent.disabled_runtime_skills,
                 runtime?.id,
@@ -326,14 +469,13 @@ export function SkillsTab({
                       </span>
                     </span>
                   </button>
-                  {canEdit &&
-                    skill.can_disable === true &&
-                    skill.root &&
+                  {canEdit && skill.root && skill.can_disable === true &&
                     (busy ? (
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
                     ) : (
                       <Switch
                         checked={!disabled}
+                        disabled={bulkBusy}
                         onCheckedChange={(checked) =>
                           handleRuntimeToggle(skill, checked)
                         }
@@ -343,6 +485,94 @@ export function SkillsTab({
                         )}
                       />
                     ))}
+                  {canEdit &&
+                    skill.can_disable !== true &&
+                    savedDisabled && (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() =>
+                                handleClearMissingRuntimeSkill(savedDisabled)
+                              }
+                              disabled={busyId !== null || bulkBusy}
+                              aria-label={t(
+                                ($) => $.tab_body.skills.runtime_clear_saved_aria,
+                                { name: savedDisabled.name ?? skill.name },
+                              )}
+                            >
+                              {busyId === missingRuntimeSkillIdentity(savedDisabled) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          }
+                        />
+                        <TooltipContent>
+                          {t(
+                            ($) => $.tab_body.skills.runtime_clear_saved_aria,
+                            { name: savedDisabled.name ?? skill.name },
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                </li>
+              );
+            })}
+            {missingDisabledRuntimeSkills.map((disabled) => {
+              const name = disabled.name ?? disabled.key;
+              const busyKey = missingRuntimeSkillIdentity(disabled);
+              const busy = busyId === busyKey;
+              const clearLabel = t(
+                ($) => $.tab_body.skills.runtime_clear_saved_aria,
+                { name },
+              );
+              return (
+                <li
+                  key={busyKey}
+                  className="flex items-center gap-3 p-3"
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                    <Server className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body font-medium">{name}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <Badge variant="outline">
+                        {t(($) => $.tab_body.skills.runtime_saved_badge)}
+                      </Badge>
+                      <span className="text-caption text-muted-foreground">
+                        {t(($) => $.tab_body.skills.runtime_not_found_badge)}
+                      </span>
+                    </span>
+                  </span>
+                  {canEdit && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() =>
+                              handleClearMissingRuntimeSkill(disabled)
+                            }
+                            disabled={busyId !== null || bulkBusy}
+                            aria-label={clearLabel}
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                            ) : (
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        }
+                      />
+                      <TooltipContent>{clearLabel}</TooltipContent>
+                    </Tooltip>
+                  )}
                 </li>
               );
             })}
@@ -363,6 +593,10 @@ export function SkillsTab({
 
 function runtimeSkillIdentity(skill: RuntimeLocalSkillSummary): string {
   return `runtime:${skill.root ?? "unknown"}:${skill.key}:${skill.plugin ?? ""}`;
+}
+
+function missingRuntimeSkillIdentity(skill: DisabledRuntimeSkill): string {
+  return `missing-runtime:${skill.runtime_id}:${skill.provider}:${skill.root}:${skill.key}:${skill.plugin ?? ""}`;
 }
 
 function isRuntimeSkillDisabled(
@@ -388,7 +622,7 @@ function CapabilitySection({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -397,7 +631,11 @@ function CapabilitySection({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-body font-medium">{title}</h3>
-          <p className="mt-1 text-caption leading-5 text-muted-foreground">{description}</p>
+          {description && (
+            <p className="mt-1 text-caption leading-5 text-muted-foreground">
+              {description}
+            </p>
+          )}
         </div>
         {action}
       </div>
@@ -477,7 +715,11 @@ function SkillDetailDialog({
               </>
             )}
             <dt className="text-muted-foreground">{t(($) => $.tab_body.skills.detail_files)}</dt>
-            <dd>{runtimeSkill.file_count}</dd>
+            <dd>
+              {runtimeSkill.can_import === false
+                ? t(($) => $.tab_body.skills.detail_files_unavailable)
+                : runtimeSkill.file_count}
+            </dd>
           </dl>
         ) : workspaceSkill ? (
           <div className="space-y-4">

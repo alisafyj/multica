@@ -198,6 +198,7 @@ type DownloadedResourceStream struct {
 // flattener — not the transport client — owns content interpretation.
 type LarkMessage struct {
 	MessageID      string
+	ChatID         string // actual chat returned by Lark; never inferred from the request
 	MessageType    string // Lark `msg_type`: text / post / image / merge_forward / …
 	Content        string // raw body.content (a JSON-encoded string)
 	SenderID       string // sender.id (open_id for users, app_id for apps)
@@ -211,14 +212,33 @@ type LarkMessage struct {
 	Mentions       []LarkMessageMention
 }
 
-// LarkMessageMention mirrors a mentions[] entry on the IM REST item
-// shape. Note this differs from the WS receive event's mention shape:
-// here `id` is a bare open_id string, not a nested {open_id, union_id,
-// user_id} object.
+// LarkMessageMention mirrors a mentions[] entry on the IM REST item.
+// Unlike WS events, id is a flat string whose namespace is given by id_type.
 type LarkMessageMention struct {
-	Key  string // e.g. "@_user_1"
-	ID   string // open_id
-	Name string // display name (may be empty)
+	Key    string // e.g. "@_user_1"
+	ID     string
+	IDType string // app_id / open_id / union_id / user_id
+	Name   string // display name (may be empty)
+}
+
+// IsBotMention matches REST metadata against this installation, never a name.
+// REST reads request user_id_type=open_id, so a missing id_type can only use
+// that namespace; it must not guess app_id or union_id from the identifier.
+// WS mentions have different multi-bot identity semantics (see isBotMention).
+func (m LarkMessageMention) IsBotMention(appID, botOpenID, botUnionID string) bool {
+	if m.ID == "" {
+		return false
+	}
+	switch m.IDType {
+	case "app_id":
+		return appID != "" && m.ID == appID
+	case "open_id", "":
+		return botOpenID != "" && m.ID == botOpenID
+	case "union_id":
+		return botUnionID != "" && m.ID == botUnionID
+	default:
+		return false
+	}
 }
 
 // BotInfo is the slice of /open-apis/bot/v3/info (+ a follow-up

@@ -3,6 +3,7 @@ package execenv
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -624,6 +625,43 @@ func TestHermesOverlayEnvCreatedWhenSourceHasNone(t *testing.T) {
 	env := applyDotenvOverride(t, filepath.Join(hermesHome, ".env"))
 	if env["HERMES_HOME"] != hermesHome {
 		t.Errorf("overlay .env must exist and pin HERMES_HOME even with no source .env; got %q", env["HERMES_HOME"])
+	}
+}
+
+func TestWriteHermesTaskEnvironment(t *testing.T) {
+	t.Parallel()
+	hermesHome := t.TempDir()
+	mustWrite(t, filepath.Join(hermesHome, ".env"), "MULTICA_TOKEN=stale\nOTHER=value\nHERMES_HOME=/task/home\n")
+	want := map[string]string{
+		"MULTICA_TOKEN":            "mat_task secret",
+		"MULTICA_SERVER_URL":       "https://iworker.example",
+		"MULTICA_TASK_CONFIG_ROOT": "/task/config root",
+		"MULTICA_WORKSPACE_ID":     "workspace-1",
+	}
+	if err := WriteHermesTaskEnvironment(hermesHome, want); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(hermesHome, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for key, value := range want {
+		line := key + "=" + strconv.Quote(value)
+		if !strings.Contains(got, line) {
+			t.Errorf("derived .env missing %q:\n%s", line, got)
+		}
+	}
+	if strings.Count(got, "MULTICA_TOKEN=") != 1 || strings.Contains(got, "MULTICA_TOKEN=stale") {
+		t.Errorf("stale token survived task environment rewrite:\n%s", got)
+	}
+	if !strings.Contains(got, "OTHER=value") || !strings.Contains(got, "HERMES_HOME=/task/home") {
+		t.Errorf("unrelated overlay env entries changed:\n%s", got)
+	}
+	if fi, err := os.Stat(filepath.Join(hermesHome, ".env")); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Errorf(".env permissions = %o, want 600", fi.Mode().Perm())
 	}
 }
 

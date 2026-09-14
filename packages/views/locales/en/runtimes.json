@@ -94,7 +94,7 @@
   "health": {
     "online": {
       "label": "Online",
-      "description": "Heartbeat received in the last 45s. Ready to dispatch tasks."
+      "description": "Heartbeat received in the last 45s. Ready to dispatch runs."
     },
     "recently_lost": {
       "label": "Recently lost",
@@ -155,12 +155,12 @@
       "cascade": {
         "title_one": "Unbind {{count}} agent and delete this Runtime?",
         "title_other": "Unbind {{count}} agents and delete this Runtime?",
-        "description": "Delete \"{{name}}\". The agents below are kept — their instructions, chats and task history stay intact — but they will be unbound and cannot run until you bind them to another runtime. Their queued or running tasks will be cancelled, and then the Runtime will be deleted.",
-        "warning": "Queued and running tasks will be cancelled, and these agents cannot be assigned new work until they are bound to a runtime.",
+        "description": "Delete \"{{name}}\". The agents below are kept — their instructions, chats and run history stay intact — but they will be unbound and cannot run until you bind them to another runtime. Their queued or in-progress runs will be cancelled, and then the Runtime will be deleted.",
+        "warning": "Queued and in-progress runs will be cancelled, and these agents cannot be assigned new work until they are bound to a runtime.",
         "notice_runtime_has_active_agents": "Active agents were added since you opened this dialog. Review the new plan and confirm.",
         "notice_runtime_delete_plan_changed": "The active agent set changed while this dialog was open. Review the new plan and confirm.",
-        "checkbox_one": "I understand this {{count}} agent will be unbound and cannot run until I bind it to a runtime, and that any queued or running tasks will be cancelled.",
-        "checkbox_other": "I understand these {{count}} agents will be unbound and cannot run until I bind them to a runtime, and that any queued or running tasks will be cancelled.",
+        "checkbox_one": "I understand this {{count}} agent will be unbound and cannot run until I bind it to a runtime, and that any queued or in-progress runs will be cancelled.",
+        "checkbox_other": "I understand these {{count}} agents will be unbound and cannot run until I bind them to a runtime, and that any queued or in-progress runs will be cancelled.",
         "cancel": "Cancel",
         "confirm_one": "Unbind {{count}} agent and delete runtime",
         "confirm_other": "Unbind {{count}} agents and delete runtime",
@@ -189,7 +189,39 @@
     "running_chip_one": "· {{count}} running",
     "running_chip_other": "· {{count}} running",
     "queued_chip_one": "· {{count}} queued",
-    "queued_chip_other": "· {{count}} queued"
+    "queued_chip_other": "· {{count}} queued",
+    "capabilities_title": "Test capabilities",
+    "capabilities_empty": "No browsers or devices reported yet.",
+    "capabilities_hint": "The daemon reports what this machine can drive in a test round. A run that needs a kind not listed here is parked as blocked at dispatch.",
+    "capabilities_scan": "Scan again",
+    "capabilities_scanning": "Scanning…",
+    "capabilities_scan_requested": "Scan requested. Results appear when the daemon reports.",
+    "capabilities_scan_failed": "Could not request a scan.",
+    "capabilities_probed": "probed {{when}}",
+    "capability_kind": {
+      "browser": "Browser",
+      "android_device": "Android device",
+      "ios_device": "iOS device",
+      "computer_use": "Computer use"
+    },
+    "capability_status": {
+      "available": "Available",
+      "busy": "Busy",
+      "offline": "Offline",
+      "unknown": "Unknown"
+    },
+    "device_hub_title": "Device hub",
+    "device_hub_test_host": "Test host",
+    "device_hub_test_host_hint": "Let test rounds drive the phones this machine's device hub reports.",
+    "device_hub_online": "Hub {{version}} online",
+    "device_hub_offline": "No device hub on this machine",
+    "device_hub_offline_hint": "Run `multica-device-mcp hub` on this machine; the daemon reports it within a report cycle.",
+    "device_hub_counts": "{{devices}} devices · {{phones}} apps · {{leases}} leases",
+    "device_hub_show_pairing": "Show pairing code",
+    "device_hub_hide_pairing": "Hide pairing code",
+    "device_hub_pairing_hint": "Scan it in the Multica app under More → Device executor, or paste the URL there.",
+    "device_hub_reported": "Reported {{when}}",
+    "device_hub_toggle_failed": "Could not update the test host setting."
   },
   "detail_page": {
     "not_found_title": "Runtime not found",
@@ -217,7 +249,7 @@
     "copy_aria": "Copy",
     "cancel": "Cancel",
     "success_title": "Computer connected",
-    "success_description": "Your computer is online and ready. Create an agent and it can start picking up tasks here.",
+    "success_description": "Your computer is online and ready. Create an agent and it can start picking up runs here.",
     "view_runtime": "View runtime",
     "create_agent": "Create an agent"
   },

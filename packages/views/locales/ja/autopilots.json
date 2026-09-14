@@ -32,7 +32,8 @@
   },
   "execution_mode": {
     "create_issue": "タスクを作成",
-    "run_only": "実行のみ"
+    "run_only": "実行のみ",
+    "test_run": "テスト実行"
   },
   "relative_date": {
     "today": "今日",
@@ -111,7 +112,9 @@
       "cancel": "キャンセル",
       "confirm": "削除",
       "deleting": "削除中..."
-    }
+    },
+    "field_test_plan": "テスト計画",
+    "test_plan_unavailable": "計画を取得できません"
   },
   "access": {
     "title": "アクセス管理",
@@ -146,7 +149,8 @@
     "skipped_group": {
       "label": "スキップ済み",
       "summary": "スキップされた実行 {{count}} 件"
-    }
+    },
+    "test_run_linked": "テストラウンド"
   },
   "webhook_payload": {
     "label": "Webhook イベント:",
@@ -327,8 +331,18 @@
       "run_only": {
         "label": "実行のみ",
         "description": "タスクを作成せず、静かに実行します"
+      },
+      "test_run": {
+        "label": "テスト実行",
+        "description": "実行のたびにテスト計画からラウンドを作成して派遣します"
       }
-    }
+    },
+    "section_test_plan": "テスト計画",
+    "test_plan_placeholder": "テスト計画を選択",
+    "no_test_plans": "テスト計画がまだありません — 「テスト」で作成してください",
+    "test_plan_required": "実行のラウンド元となるテスト計画を選んでください",
+    "test_run_parallelism": "並列ケース数",
+    "test_run_parallelism_hint": "同時に派遣するケース数。空欄なら全件"
   },
   "schedule_editor": {
     "time_label": "時刻",

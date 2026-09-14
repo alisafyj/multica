@@ -157,13 +157,16 @@ function renderPanel(props: { onImported?: (skill: unknown) => void; onBulkDone?
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  return {
+    ...render(
     <I18nWrapper>
       <QueryClientProvider client={queryClient}>
         <RuntimeLocalSkillImportPanel {...props} />
       </QueryClientProvider>
     </I18nWrapper>,
-  );
+    ),
+    queryClient,
+  };
 }
 
 describe("RuntimeLocalSkillImportPanel", () => {
@@ -306,6 +309,77 @@ describe("RuntimeLocalSkillImportPanel", () => {
 
     // Verify summary shows both as created
     expect(screen.getByText("Created")).toBeInTheDocument();
+  });
+
+  it("excludes known unavailable bundles from individual and bulk import", async () => {
+    mockRuntimeLocalSkillsOptions.mockReturnValue({
+      queryKey: ["runtimes", "local-skills", "runtime-1"],
+      queryFn: () =>
+        Promise.resolve({
+          supported: true,
+          skills: [
+            MOCK_SKILL_A,
+            { ...MOCK_SKILL_B, can_import: false, file_count: 0 },
+          ],
+        }),
+    });
+
+    renderPanel();
+
+    const unavailable = await screen.findByRole("button", {
+      name: /Code Gen/i,
+    });
+    expect(unavailable).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Files unavailable")).toBeInTheDocument();
+
+    fireEvent.click(unavailable);
+    expect(
+      screen.getByRole("button", { name: /Import to Workspace/i }),
+    ).toBeDisabled();
+
+    const selectAllLabel = screen.getByText("Select all (1)");
+    fireEvent.click(
+      selectAllLabel.closest("label")!.querySelector("input[type='checkbox']")!,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Import to Workspace/i }),
+    );
+
+    await waitFor(() =>
+      expect(mockResolveRuntimeLocalSkillImport).toHaveBeenCalledWith(
+        "runtime-1",
+        expect.objectContaining({ skill_key: "review-helper" }),
+      ),
+    );
+    expect(mockResolveRuntimeLocalSkillImport).not.toHaveBeenCalledWith(
+      "runtime-1",
+      expect.objectContaining({ skill_key: "code-gen" }),
+    );
+  });
+
+  it("clears a stale selection when refresh marks the bundle unavailable", async () => {
+    const rendered = renderPanel();
+
+    const skill = await screen.findByRole("button", { name: /Review Helper/i });
+    fireEvent.click(skill);
+    expect(
+      screen.getByRole("button", { name: /Import to Workspace/i }),
+    ).not.toBeDisabled();
+
+    rendered.queryClient.setQueryData(
+      ["runtimes", "local-skills", "runtime-1"],
+      {
+        supported: true,
+        skills: [{ ...MOCK_SKILL_A, can_import: false, file_count: 0 }],
+      },
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Import to Workspace/i }),
+      ).toBeDisabled(),
+    );
+    expect(screen.getByText("Files unavailable")).toBeInTheDocument();
   });
 
   it("filters local runtime skills and selects only visible matches", async () => {

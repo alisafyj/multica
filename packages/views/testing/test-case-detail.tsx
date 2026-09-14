@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Trash2, XCircle, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { AppLink } from "../navigation";
 import {
+  parseCapabilityRequirements,
   TEST_CASE_EXECUTION_MODES,
   TEST_CASE_PRIORITIES,
   TEST_CASE_SCOPES,
@@ -16,6 +17,8 @@ import {
   testCaseProposalsOptions,
   testCaseRevisionsOptions,
   testCaseResultTimelineOptions,
+  FLAKY_WINDOW,
+  isFlakyHistory,
   useAcceptTestCaseProposal,
   useApproveTestCase,
   useDeleteTestCase,
@@ -24,7 +27,8 @@ import {
   TEST_RUN_RESULTS,
   TEST_RUN_RESULT_TONE,
 } from "@multica/core/testing";
-import type { TestCaseProposal } from "@multica/core/types";
+import type {
+  TestCapabilityRequirement, TestCaseProposal } from "@multica/core/types";
 import type {
   TestCase,
   TestCaseChangeKind,
@@ -45,6 +49,7 @@ import { useT } from "../i18n";
 import { crossRepoWarning, repoAliases, knownEnumKey } from "./case-summary";
 import { TestCaseStepsEditor } from "./components/test-case-steps-editor";
 import { TestCaseReposField } from "./components/test-case-repos-field";
+import { TestCaseCapabilitiesField } from "./components/test-case-capabilities-field";
 import { CaseIssueLinks } from "./components/case-issue-links";
 
 interface TestCaseDetailProps {
@@ -63,6 +68,7 @@ interface DraftState {
   caseType: string;
   scope: string;
   executionMode: string;
+  requiredCapabilities: TestCapabilityRequirement[];
 }
 
 function toDraft(testCase: TestCase): DraftState {
@@ -77,6 +83,7 @@ function toDraft(testCase: TestCase): DraftState {
     caseType: testCase.case_type,
     scope: testCase.scope,
     executionMode: testCase.execution_mode,
+    requiredCapabilities: parseCapabilityRequirements(testCase.required_capabilities),
   };
 }
 
@@ -154,6 +161,7 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
         case_type: current.caseType as TestCaseType,
         scope: current.scope as TestCaseScope,
         execution_mode: current.executionMode as TestCaseExecutionMode,
+        required_capabilities: current.requiredCapabilities.map((requirement) => ({ ...requirement })),
       },
       {
         onSuccess: () => toast.success(t(($) => $.toast.saved)),
@@ -291,6 +299,17 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
             onChange={(executionMode) => patch({ executionMode })}
           />
 
+          {/* Which browser or device a round must be bound to. Lives beside
+              execution mode because "agent" without a capability is a case
+              the agent can only read, not run. */}
+          <Field label={t(($) => $.capabilities.title)}>
+            <TestCaseCapabilitiesField
+              value={current.requiredCapabilities}
+              disabled={busy}
+              onChange={(requiredCapabilities) => patch({ requiredCapabilities })}
+            />
+          </Field>
+
           <Field label={t(($) => $.detail.repos)}>
             {warning === "missing_repos" ? (
               <p className="mb-2 text-caption text-warning">
@@ -337,6 +356,15 @@ export function TestCaseDetail({ refId }: TestCaseDetailProps) {
 
           {/* Cross-run result timeline — regression value view */}
           <Field label={t(($) => $.timeline.title)}>
+            {isFlakyHistory(timeline.map((entry) => entry.result)) ? (
+              <span
+                className="mb-1.5 inline-flex items-center gap-1 rounded bg-warning/15 px-1.5 text-micro font-medium text-warning"
+                title={t(($) => $.timeline.flakyHint, { count: FLAKY_WINDOW })}
+              >
+                <Activity className="h-3 w-3" />
+                {t(($) => $.timeline.flaky)}
+              </span>
+            ) : null}
             {timeline.length === 0 ? (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.timeline.empty)}

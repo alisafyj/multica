@@ -21,6 +21,7 @@ import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
 import { api, clientErrorMessage, dispatchReasonCode } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { testPlanDetailOptions } from "@multica/core/testing";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useNavigation, AppLink } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
@@ -148,6 +149,8 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
       <span className="flex-1 min-w-0 text-caption text-muted-foreground truncate">
         {run.issue_id ? (
           t(($) => $.run.issue_linked)
+        ) : run.test_run_id ? (
+          t(($) => $.run.test_run_linked)
         ) : run.failure_reason ? (
           <span className="text-destructive">{run.failure_reason}</span>
         ) : null}
@@ -155,7 +158,7 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
       <span className="w-32 shrink-0 text-right text-caption text-muted-foreground tabular-nums">
         {formatInTimeZone(run.triggered_at || run.created_at, undefined, i18n.language)}
       </span>
-      {syntheticTask && !run.issue_id && (
+      {syntheticTask && !run.issue_id && !run.test_run_id && (
         <TranscriptButton
           task={syntheticTask}
           agentName={agentName}
@@ -176,6 +179,13 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
   if (run.issue_id) {
     return (
       <AppLink href={wsPaths.issueDetail(run.issue_id)} className={cn(rowClass, "cursor-pointer")}>
+        {content}
+      </AppLink>
+    );
+  }
+  if (run.test_run_id) {
+    return (
+      <AppLink href={wsPaths.testRunDetail(run.test_run_id)} className={cn(rowClass, "cursor-pointer")}>
         {content}
       </AppLink>
     );
@@ -898,6 +908,14 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
                   {t(($) => $.execution_mode[autopilot.execution_mode as AutopilotExecutionMode])}
                 </div>
               </div>
+              {autopilot.execution_mode === "test_run" && autopilot.test_plan_id ? (
+                <div>
+                  <label className="text-caption text-muted-foreground">{t(($) => $.detail.field_test_plan)}</label>
+                  <div className="mt-1 min-w-0">
+                    <TestPlanLink planId={autopilot.test_plan_id} />
+                  </div>
+                </div>
+              ) : null}
               {/* Shown for BOTH output modes (MUL-6681): a run_only autopilot's
                   project decides its execution environment (repository /
                   local_directory, and therefore worktree isolation), so an
@@ -1038,6 +1056,8 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
             assignee_type: autopilot.assignee_type,
             assignee_id: autopilot.assignee_id,
             execution_mode: autopilot.execution_mode as AutopilotExecutionMode,
+            test_plan_id: autopilot.test_plan_id ?? null,
+            test_run_parallelism: autopilot.test_run_parallelism ?? null,
             subscriber_user_ids:
               autopilot.subscribers
                 ?.filter((s) => s.user_type === "member")
@@ -1076,5 +1096,23 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// The plan a test_run autopilot builds its rounds from, as a link; the id
+// alone would send the operator hunting through the plans page.
+function TestPlanLink({ planId }: { planId: string }) {
+  const { t } = useT("autopilots");
+  const wsId = useWorkspaceId();
+  const wsPaths = useWorkspacePaths();
+  const { data: plan, isLoading } = useQuery(testPlanDetailOptions(wsId, planId));
+  if (isLoading) return <Skeleton className="h-5 w-32" />;
+  if (!plan || plan.id.length === 0) {
+    return <span className="text-muted-foreground">{t(($) => $.detail.test_plan_unavailable)}</span>;
+  }
+  return (
+    <AppLink href={wsPaths.testPlanDetail(plan.id)} className="text-foreground hover:underline">
+      {plan.title}
+    </AppLink>
   );
 }

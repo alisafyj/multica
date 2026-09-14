@@ -12,6 +12,7 @@ import (
 // component tag attached and color escapes disabled. This is the contract the
 // daemon relies on to funnel every log line into its rotating daemon.log.
 func TestNewWriterLoggerDefault(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_LOG_FORMAT", "")
 	// slog.SetDefault mutates global state, so this test cannot run in parallel
 	// with others touching the default logger; restore it afterwards.
 	prev := slog.Default()

@@ -19,6 +19,12 @@ batch AS MATERIALIZED (
 deleted_task_usage AS (
     DELETE FROM task_usage WHERE task_id IN (SELECT id FROM batch)
 ),
+deleted_task_run_evidence AS (
+    DELETE FROM task_run_evidence WHERE task_id IN (SELECT id FROM batch)
+),
+deleted_task_pending_inputs AS (
+    DELETE FROM task_pending_input WHERE task_id IN (SELECT id FROM batch)
+),
 deleted_task_messages AS (
     DELETE FROM task_message WHERE task_id IN (SELECT id FROM batch)
 ),
@@ -386,6 +392,9 @@ func (q *Queries) DeleteWorkspaceIssueRoots(ctx context.Context, workspaceID pgt
 
 const deleteWorkspaceLeafData = `-- name: DeleteWorkspaceLeafData :exec
 WITH
+deleted_task_pending_inputs AS (
+    DELETE FROM task_pending_input WHERE workspace_id = $1
+),
 ws_agents AS MATERIALIZED (
     SELECT id FROM agent WHERE workspace_id = $1
 ),
@@ -573,6 +582,9 @@ deleted_channel_inbound_dedup AS (
 deleted_channel_inbound_audit AS (
     DELETE FROM channel_inbound_audit
     WHERE installation_id IN (SELECT id FROM ws_channel_installations)
+),
+deleted_chat_prd_drafts AS (
+    DELETE FROM chat_prd_draft WHERE workspace_id = $1
 ),
 deleted_channel_user_bindings AS (
     DELETE FROM channel_user_binding WHERE workspace_id = $1

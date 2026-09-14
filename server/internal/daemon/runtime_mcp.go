@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/agentconfig"
 	"github.com/multica-ai/multica/server/internal/agentguard"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -35,6 +36,13 @@ type runtimeLocalMcpServerSummary struct {
 // config returns nil so execenv can inherit the active user config; any explicit
 // config is managed in isolation and still passes through the privacy filter.
 func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage) (json.RawMessage, error) {
+	selection, err := agentconfig.ParseRuntimeMCPSelection(agentConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := selection.ValidateProvider(provider); err != nil {
+		return nil, err
+	}
 	trimmed := bytes.TrimSpace(agentConfig)
 	hasExplicitAgentConfig := len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 	if provider == "openclaw" && !hasExplicitAgentConfig {
@@ -48,6 +56,7 @@ func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage)
 	if err := json.Unmarshal(trimmed, &agentDocument); err != nil {
 		return nil, fmt.Errorf("parse agent MCP config: %w", err)
 	}
+	delete(agentDocument, "_multica")
 	agentServers := map[string]any{}
 	if servers, ok := nestedRuntimeMcpMap(agentDocument, "mcpServers"); ok {
 		agentServers = servers
@@ -62,9 +71,20 @@ func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage)
 
 	runtimeServers := map[string]any{}
 	supported := false
-	if provider != "openclaw" {
+	if selection.Mode == "deny_all" || (selection.Mode == "allowlist" && len(selection.Allow) == 0) {
+		supported = true
+	} else if provider != "openclaw" {
 		var err error
 		runtimeServers, supported, err = loadRuntimeMcpServerConfigs(provider)
+		if err != nil {
+			if selection.Mode != "inherit" {
+				return nil, fmt.Errorf("%w: runtime configuration could not be loaded", agentconfig.ErrRuntimeMCPSelection)
+			}
+			return nil, err
+		}
+	}
+	if selection.Mode == "allowlist" {
+		runtimeServers, err = selectRuntimeMCPServers(runtimeServers, selection.Allow)
 		if err != nil {
 			return nil, err
 		}
@@ -95,6 +115,35 @@ func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage)
 		return nil, err
 	}
 	return filtered, nil
+}
+
+func selectRuntimeMCPServers(runtimeServers map[string]any, names []string) (map[string]any, error) {
+	selected := make(map[string]any, len(names))
+	for _, name := range names {
+		entry, ok := runtimeServers[name].(map[string]any)
+		if !ok || entry == nil {
+			return nil, fmt.Errorf("%w: required runtime MCP server is missing or invalid", agentconfig.ErrRuntimeMCPSelection)
+		}
+		for _, key := range []string{"enabled", "disabled"} {
+			if value, present := entry[key]; present {
+				enabled, valid := value.(bool)
+				if !valid || (key == "enabled" && !enabled) || (key == "disabled" && enabled) {
+					return nil, fmt.Errorf("%w: required runtime MCP server is disabled or invalid", agentconfig.ErrRuntimeMCPSelection)
+				}
+			}
+		}
+		selected[name] = entry
+	}
+	// Validate the selected runtime layer before an overlay can replace a
+	// blocked entry under the same name and hide an unsatisfied requirement.
+	raw, err := json.Marshal(map[string]any{"mcpServers": selected})
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid runtime MCP configuration", agentconfig.ErrRuntimeMCPSelection)
+	}
+	if _, blocked, err := agentguard.FilterMCPConfig(raw); err != nil || blocked != 0 {
+		return nil, fmt.Errorf("%w: required runtime MCP server is privacy-blocked", agentconfig.ErrRuntimeMCPSelection)
+	}
+	return selected, nil
 }
 
 // codeArtsUserConfigPath returns the first CodeArts user config file present,
@@ -513,11 +562,13 @@ func runtimeMcpSummaries(servers map[string]any, source string) []runtimeLocalMc
 			continue
 		}
 		enabled := true
-		if value, ok := entry["enabled"].(bool); ok {
-			enabled = value
+		if raw, exists := entry["enabled"]; exists {
+			value, valid := raw.(bool)
+			enabled = valid && value
 		}
-		if value, ok := entry["disabled"].(bool); ok && value {
-			enabled = false
+		if raw, exists := entry["disabled"]; exists {
+			value, valid := raw.(bool)
+			enabled = enabled && valid && !value
 		}
 		out = append(out, runtimeLocalMcpServerSummary{
 			Name:      name,

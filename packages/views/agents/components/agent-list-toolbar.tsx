@@ -77,6 +77,7 @@ const SORT_FIELDS: AgentSortField[] = [
 const AVAILABILITY_VALUES: AgentAvailability[] = [
   "online",
   "unstable",
+  "unknown",
   "offline",
 ];
 

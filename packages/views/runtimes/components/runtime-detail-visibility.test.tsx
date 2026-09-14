@@ -89,6 +89,13 @@ vi.mock("@multica/core/runtimes", async () => ({
   runtimeProfileListOptions: (wsId: string) => ({
     queryKey: ["runtime-profiles", wsId],
   }),
+  // The device hub card (M4) reads the hub summary through this query; the
+  // generic useQuery stub answers it with no data, i.e. "no hub reachable".
+  runtimeDeviceHubOptions: (runtimeId: string) => ({
+    queryKey: ["runtime-device-hub", runtimeId],
+  }),
+  // The card's test-host switch; the index re-exports the mutation hook.
+  useUpdateRuntime: () => ({ mutate: vi.fn(), isPending: false }),
   parseRuntimeProfileBoundConflict: () => null,
   useDeleteRuntimeProfile: () => ({
     mutate: vi.fn(),

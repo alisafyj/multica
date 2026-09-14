@@ -11,6 +11,7 @@ import {
   testCaseListOptions,
   testPlanDetailOptions,
   testPlanCasesOptions,
+  testPlanStatsOptions,
   useCreateTestRun,
   useDeleteTestPlan,
   useRemoveTestPlanCase,
@@ -34,6 +35,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { BreadcrumbHeader } from "../layout/breadcrumb-header";
 import { AppLink, useNavigation } from "../navigation";
+import type { TestPlanStats } from "@multica/core/types";
 import { useT } from "../i18n";
 
 export function TestPlanDetail({ planId }: { planId: string }) {
@@ -45,6 +47,8 @@ export function TestPlanDetail({ planId }: { planId: string }) {
   const [runTitle, setRunTitle] = useState("");
   const [environment, setEnvironment] = useState("");
   const [buildRef, setBuildRef] = useState("");
+  // Empty = no cap: every case is dispatched at once.
+  const [parallelism, setParallelism] = useState("");
   const [isCreatingRun, setIsCreatingRun] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -56,6 +60,7 @@ export function TestPlanDetail({ planId }: { planId: string }) {
   } = useQuery(testPlanDetailOptions(wsId, planId));
 
   const { data: cases = [] } = useQuery(testPlanCasesOptions(wsId, planId));
+  const { data: stats } = useQuery(testPlanStatsOptions(wsId, planId));
 
   // A plan row carries only the case id. The library for the plan's project is
   // the same list the cases tab already caches, so resolving key and title
@@ -148,6 +153,11 @@ export function TestPlanDetail({ planId }: { planId: string }) {
     }
   }
 
+  const parsedParallelism = (() => {
+    const n = Number.parseInt(parallelism.trim(), 10);
+    return Number.isFinite(n) && n >= 1 ? n : undefined;
+  })();
+
   async function handleCreateRun() {
     if (!plan) return;
     const title = runTitle.trim() || plan.title;
@@ -158,6 +168,7 @@ export function TestPlanDetail({ planId }: { planId: string }) {
         title,
         environment: environment.trim() || undefined,
         build_ref: buildRef.trim() || undefined,
+        parallelism: parsedParallelism,
       });
       toast.success(t(($) => $.toast.runCreated));
       navigation.push(paths.testRunDetail(run.id));
@@ -301,6 +312,8 @@ export function TestPlanDetail({ planId }: { planId: string }) {
               )}
             </section>
 
+            <PlanBoard stats={stats} />
+
             <aside className="space-y-3">
               {/* Create run panel */}
               <section className="rounded-lg border bg-background p-4">
@@ -344,6 +357,21 @@ export function TestPlanDetail({ planId }: { planId: string }) {
                       onChange={(e) => setBuildRef(e.target.value)}
                       // eslint-disable-next-line no-restricted-syntax -- a build ref format example, not copy
                       placeholder="v1.2.3"
+                      className="h-8 text-caption"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-caption font-medium text-muted-foreground">
+                      {t(($) => $.plans.detail.parallelism)}
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={64}
+                      value={parallelism}
+                      onChange={(e) => setParallelism(e.target.value)}
+                      placeholder={t(($) => $.plans.detail.parallelismPlaceholder)}
                       className="h-8 text-caption"
                     />
                   </div>
@@ -465,5 +493,94 @@ export function TestPlanDetail({ planId }: { planId: string }) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+/**
+ * The plan's board (09-02 §7.5): pass rate per recent round and the
+ * module × result matrix of the newest one, so the owner reads the state of
+ * the plan without opening every round.
+ */
+function PlanBoard({ stats }: { stats: TestPlanStats | undefined }) {
+  const { t } = useT("testing");
+  const paths = useWorkspacePaths();
+  const runs = stats?.runs ?? [];
+  const matrix = stats?.matrix ?? [];
+  const columns = ["passed", "failed", "blocked", "skipped", "pending"] as const;
+  return (
+    <section className="rounded-lg border bg-background">
+      <div className="border-b border-border px-4 py-3 text-body font-medium">
+        {t(($) => $.plans.detail.board)}
+      </div>
+      {runs.length === 0 ? (
+        <div className="p-6 text-center text-caption text-muted-foreground">
+          {t(($) => $.plans.detail.boardEmpty)}
+        </div>
+      ) : (
+        <div className="space-y-4 p-4">
+          <ul className="flex flex-col gap-1.5">
+            {runs.map((run) => (
+              <li key={run.id} className="flex items-center gap-2 text-caption">
+                <AppLink
+                  href={paths.testRunDetail(run.id)}
+                  className="min-w-0 flex-1 truncate hover:underline"
+                  title={run.title}
+                >
+                  {run.title}
+                </AppLink>
+                <span className="shrink-0 text-muted-foreground tabular-nums">
+                  {(run.results.passed ?? 0)}/{run.total}
+                </span>
+                <span
+                  className={`w-12 shrink-0 text-right font-medium tabular-nums ${
+                    run.pass_rate === null
+                      ? "text-muted-foreground"
+                      : run.pass_rate >= 0.9
+                        ? "text-success"
+                        : run.pass_rate >= 0.6
+                          ? "text-warning"
+                          : "text-destructive"
+                  }`}
+                  title={t(($) => $.plans.detail.passRate)}
+                >
+                  {run.pass_rate === null ? "—" : `${Math.round(run.pass_rate * 100)}%`}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {matrix.length > 0 ? (
+            <div className="overflow-x-auto">
+              <div className="mb-1 text-caption font-medium text-muted-foreground">
+                {t(($) => $.plans.detail.matrixTitle)}
+              </div>
+              <table className="w-full text-caption">
+                <thead>
+                  <tr className="text-left text-micro uppercase tracking-wide text-muted-foreground">
+                    <th className="py-1 pr-2 font-medium">{t(($) => $.plans.detail.moduleColumn)}</th>
+                    {columns.map((column) => (
+                      <th key={column} className="py-1 pr-2 text-right font-medium">
+                        {t(($) => $.run.result[column])}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {matrix.map((row) => (
+                    <tr key={row.module || "__none"} className="border-t border-border">
+                      <td className="py-1 pr-2">{row.module || t(($) => $.plans.detail.moduleUnnamed)}</td>
+                      {columns.map((column) => (
+                        <td key={column} className="py-1 pr-2 text-right tabular-nums">
+                          {row.results[column] ?? 0}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
   );
 }

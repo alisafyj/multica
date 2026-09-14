@@ -40,7 +40,7 @@
     "feishu_group": "Feishu グループ",
     "feedback": "フィードバック",
     "check_for_updates": "更新を確認",
-    "update_ready": "バージョン {{version}} のダウンロード準備ができました",
+    "update_ready": "新しいバージョン {{version}} が見つかりました。バックグラウンドでダウンロードしています",
     "up_to_date": "最新の状態です",
     "server_version": "サーバーバージョン {{version}}",
     "upstream_base_version": "コミュニティベースバージョン {{version}}"
@@ -61,8 +61,10 @@
     "new_issue": "新規タスク",
     "new_issue_shortcut": "C",
     "pinned_label": "ピン留め済み",
-    "workspace_group": "ワークスペース",
-    "configure_group": "設定",
-    "unread_overflow": "99+"
+    "unread_overflow": "99+",
+    "work_group": "仕事",
+    "ai_team_group": "AI チーム",
+    "show_more_pins": "さらに {{count}} 件を表示…",
+    "show_fewer_pins": "表示を減らす"
   }
 }

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAuthStore } from "../auth";
 import { configStore } from "../config";
+import type { StorageAdapter, User } from "../types";
 import { ApiClient, ApiError, CHAT_DRAFT_RESTORE_CAPABILITY, clientErrorMessage } from "./client";
 import { EMPTY_PLUGIN_PACKAGE_LIST, EMPTY_PLUGIN_PREVIEW, EMPTY_PLUGIN_SURFACE_LAUNCH } from "./schemas";
 
@@ -15,7 +17,7 @@ describe("issue comment design delivery", () => {
     const delivery = { operation: "design", task_id: "task-1", document_id: "document-1", agent_id: "chosen-agent", project_resource_id: "repository-1" };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...comment, design_delivery: delivery }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
-    const result = await new ApiClient("https://api.example.test").createComment("issue-1", comment.content, undefined, undefined, undefined, undefined, request);
+    const result = await new ApiClient("https://api.example.test").createComment("issue-1", comment.content, undefined, undefined, undefined, undefined, { designRequest: request });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ content: comment.content, type: "comment", design_request: request });
     expect(result.design_delivery).toEqual(delivery);
   });
@@ -1518,6 +1520,19 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("keeps agent history usable when optional execution telemetry is malformed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: "legacy", status: "completed" },
+      { id: "invalid", status: "failed", execution_metrics: "unavailable" },
+    ]), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    const tasks = await new ApiClient("https://api.example.test").listAgentTasks("agent-1");
+    expect(tasks.map((task) => [task.id, task.status, task.execution_metrics])).toEqual([
+      ["legacy", "completed", undefined],
+      ["invalid", "failed", undefined],
+    ]);
+  });
+
   it("parses per-run token usage on task runs", async () => {
     vi.stubGlobal(
       "fetch",
@@ -1597,6 +1612,42 @@ describe("ApiClient", () => {
     expect(tasks[1]?.usage).toBeUndefined();
     expect(tasks[2]?.usage?.[0]?.input_tokens).toBe(31_000);
     expect(tasks[2]?.usage?.[0]?.output_tokens).toBe(0);
+  });
+
+  it("keeps agent detail task history on the lightweight endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          { id: "task-1", status: "completed", created_at: "2026-08-27T03:00:00Z" },
+          { id: "task-2", status: "completed", created_at: "2026-08-27T02:00:00Z" },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const tasks = await client.listAgentTasks("agent-1");
+
+    expect(tasks.map((task) => task.id)).toEqual(["task-1", "task-2"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/agents/agent-1/tasks",
+    );
+  });
+
+  it("falls back to an empty agent task history for a malformed response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ tasks: "not-an-array" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listAgentTasks("agent-1")).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
@@ -1885,6 +1936,37 @@ describe("ApiClient", () => {
         }),
       },
     ]);
+  });
+
+  it("serializes concise_mode tri-state on the comment contract", async () => {
+    const commentBody = () => new Response(JSON.stringify({
+      id: "comment-1",
+      issue_id: "issue-1",
+      author_type: "member",
+      author_id: "user-1",
+      content: "hello",
+      type: "comment",
+      parent_id: null,
+      created_at: "2026-09-09T00:00:00Z",
+      updated_at: "2026-09-09T00:00:00Z",
+    }), { status: 201, headers: { "Content-Type": "application/json" } });
+    const fetchMock = vi.fn().mockImplementation(() => commentBody());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.createComment("issue-1", "concise", undefined, undefined, undefined, undefined, { conciseMode: true });
+    await client.createComment("issue-1", "standard");
+
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({
+      content: "concise",
+      type: "comment",
+      concise_mode: true,
+    });
+    // Omitted option keeps the legacy body so older servers are untouched.
+    expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({
+      content: "standard",
+      type: "comment",
+    });
   });
 
   it("uses the Cloud Runtime node API contract", async () => {
@@ -2617,6 +2699,37 @@ describe("ApiClient", () => {
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });
     });
 
+    it("sendChatMessage serialises concise_mode when the option is set and omits it otherwise", async () => {
+      const fetchMock = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "2026-08-01T00:00:00Z" }), {
+            status: 201,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      await client.sendChatMessage("session-1", "hello", undefined, { conciseMode: true });
+      await client.sendChatMessage("session-1", "standard", undefined, { conciseMode: false });
+      await client.sendChatMessage("session-1", "legacy");
+
+      // Explicit true/false both force the wire key; the omitted option keeps
+      // the legacy body shape so older servers are untouched.
+      expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({
+        content: "hello",
+        concise_mode: true,
+      });
+      expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({
+        content: "standard",
+        concise_mode: false,
+      });
+      expect(JSON.parse(fetchMock.mock.calls[2]![1]?.body as string)).toEqual({
+        content: "legacy",
+      });
+    });
+
     it("sendChatMessage accepts the server's null attachment_ids for text-only sends", async () => {
       vi.stubGlobal(
         "fetch",
@@ -2750,6 +2863,19 @@ describe("ApiClient model discovery response schema", () => {
     expect(result.cached_at).toBe("2026-07-29T00:00:00Z");
   });
 
+  it("requests a live model list when force refresh is selected", async () => {
+    stubJSON(completed);
+
+    await new ApiClient("https://api.example.test").initiateListModels("rt-1", {
+      force: true,
+    });
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      "https://api.example.test/api/runtimes/rt-1/models?force=true",
+    );
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+  });
+
   // The picker drives a state machine off `status`, so a malformed body must
   // become an explicit failure — not a fabricated empty catalog, and not an
   // endless "discovering models" spinner.
@@ -2785,6 +2911,63 @@ describe("ApiClient model discovery response schema", () => {
 
     expect(result.supported).toBe(true);
     expect(result.status).toBe("completed");
+  });
+});
+
+describe("ApiClient local skill discovery response schema", () => {
+  const completed = {
+    id: "req-1",
+    runtime_id: "rt-1",
+    status: "completed",
+    supported: true,
+    created_at: "2026-09-07T00:00:00Z",
+    updated_at: "2026-09-07T00:00:01Z",
+    skills: [
+      {
+        key: "review-helper",
+        name: "Review Helper",
+        source_path: "~/.claude/skills/review-helper",
+        provider: "claude",
+        file_count: 2,
+      },
+    ],
+  };
+
+  function stubJSON(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+  }
+
+  it("keeps an old daemon response without can_import usable", async () => {
+    stubJSON(completed);
+
+    const result = await new ApiClient("https://api.example.test")
+      .initiateListLocalSkills("rt-1");
+
+    expect(result.status).toBe("completed");
+    expect(result.skills?.[0]?.can_import).toBeUndefined();
+  });
+
+  it("fails closed on a malformed can_import value", async () => {
+    stubJSON({
+      ...completed,
+      skills: [{ ...completed.skills[0], can_import: "yes" }],
+    });
+
+    const result = await new ApiClient("https://api.example.test")
+      .getListLocalSkillsResult("rt-1", "req-9");
+
+    expect(result.status).toBe("failed");
+    expect(result.skills).toBeUndefined();
+    expect(result.id).toBe("req-9");
+    expect(result.runtime_id).toBe("rt-1");
   });
 });
 
@@ -3426,5 +3609,95 @@ describe("clientErrorMessage", () => {
   it("withholds a transport failure, whose message says nothing actionable", () => {
     expect(clientErrorMessage(new TypeError("Failed to fetch"))).toBeUndefined();
     expect(clientErrorMessage(undefined)).toBeUndefined();
+  });
+});
+
+describe("ApiClient runtime capability scan response schema", () => {
+  it("returns the queued scan when the response is well-formed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ request_id: "scan-1", runtime_id: "rt-1", status: "pending" }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").requestRuntimeCapabilityScan("rt-1"),
+    ).resolves.toEqual({ request_id: "scan-1", runtime_id: "rt-1", status: "pending" });
+  });
+
+  it("falls back to an empty scan when the response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ request_id: 42, runtime_id: ["rt-1"] }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").requestRuntimeCapabilityScan("rt-1"),
+    ).resolves.toEqual({ request_id: "", runtime_id: "", status: "pending" });
+  });
+});
+
+// The wiring this exercises is the one CoreProvider installs: the client's
+// 401 hook drives the auth store's session teardown. Before MUL-7028 the hook
+// only dropped the stored token, so the shell stayed mounted with a live
+// `user` and every following request came back "missing authorization" with
+// no way for the user to get to the login page.
+describe("ApiClient session expiry", () => {
+  function makeStorage(
+    initial: Record<string, string> = {},
+  ): StorageAdapter {
+    const values = { ...initial };
+    return {
+      getItem: (key) => values[key] ?? null,
+      setItem: (key, value) => {
+        values[key] = value;
+      },
+      removeItem: (key) => {
+        delete values[key];
+      },
+    };
+  }
+
+  it("ends the session when the server rejects the credential mid-flight", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "missing authorization" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const storage = makeStorage({ multica_token: "live-token" });
+    // The client is constructed before the store it notifies, exactly as
+    // CoreProvider's initCore does; the hook only ever runs from a request.
+    const session: { store?: ReturnType<typeof createAuthStore> } = {};
+    const client = new ApiClient("https://api.example.test", {
+      onUnauthorized: () => session.store?.getState().sessionExpired(),
+    });
+    const store = createAuthStore({ api: client, storage });
+    session.store = store;
+    store.setState({
+      user: { id: "u1", email: "a@example.com" } as User,
+      isLoading: false,
+      status: "authenticated",
+    });
+    client.setToken("live-token");
+
+    await expect(client.listProjects()).rejects.toBeInstanceOf(ApiError);
+
+    expect(store.getState().user).toBeNull();
+    expect(store.getState().status).toBe("unauthenticated");
+    expect(store.getState().expired).toBe(true);
+    expect(storage.getItem("multica_token")).toBeNull();
   });
 });

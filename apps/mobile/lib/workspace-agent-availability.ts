@@ -7,8 +7,8 @@
  * `"loading" | "none" | "available"` instead of a boolean.
  *
  * The chat NoAgentBanner uses this: only `"none"` triggers the banner +
- * input-disable; `"loading"` stays neutral to avoid a fake-empty flash on
- * mount.
+ * input-disable; `"loading"` stays neutral for pending and failed queries to
+ * avoid a fake-empty state.
  */
 import { useQuery } from "@tanstack/react-query";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
@@ -23,14 +23,12 @@ export function useWorkspaceAgentAvailability(): WorkspaceAgentAvailability {
   const wsId = useWorkspaceStore((s) => s.currentWorkspaceId);
   const userId = useAuthStore((s) => s.user?.id);
 
-  const { data: agents, isFetched: agentsFetched } = useQuery(
+  const { data: agents, isSuccess: agentsSucceeded } = useQuery(
     agentListOptions(wsId),
   );
-  const { data: members, isFetched: membersFetched } = useQuery(
+  const { data: members, isSuccess: membersSucceeded } = useQuery(
     memberListOptions(wsId),
   );
-
-  if (!agentsFetched || !membersFetched) return "loading";
 
   const role = members?.find((m) => m.user_id === userId)?.role ?? null;
 
@@ -40,5 +38,6 @@ export function useWorkspaceAgentAvailability(): WorkspaceAgentAvailability {
       canAssignAgentToIssue(a, { userId: userId ?? null, role }).allowed,
   );
 
-  return hasVisibleAgent ? "available" : "none";
+  if (hasVisibleAgent) return "available";
+  return agentsSucceeded && membersSucceeded ? "none" : "loading";
 }

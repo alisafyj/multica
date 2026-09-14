@@ -17,8 +17,8 @@ import { canAssignAgentToIssue } from "../permissions";
  * disabled/empty states for the first few hundred ms after mount, even
  * when the workspace actually has agents.
  *
- *   "loading"   — agent or member list still in flight (be neutral in UI)
- *   "none"      — both queries resolved, user has zero assignable agents
+ *   "loading"   — either query is pending or failed (be neutral in UI)
+ *   "none"      — both queries succeeded, user has zero assignable agents
  *   "available" — at least one agent passes archive + visibility filters
  */
 export type WorkspaceAgentAvailability = "loading" | "none" | "available";
@@ -35,14 +35,12 @@ export type WorkspaceAgentAvailability = "loading" | "none" | "available";
 export function useWorkspaceAgentAvailability(): WorkspaceAgentAvailability {
   const wsId = useWorkspaceId();
   const userId = useAuthStore((s) => s.user?.id);
-  const { data: agents, isFetched: agentsFetched } = useQuery(
+  const { data: agents, isSuccess: agentsSucceeded } = useQuery(
     agentListOptions(wsId),
   );
-  const { data: members, isFetched: membersFetched } = useQuery(
+  const { data: members, isSuccess: membersSucceeded } = useQuery(
     memberListOptions(wsId),
   );
-
-  if (!agentsFetched || !membersFetched) return "loading";
 
   const rawRole = members?.find((m) => m.user_id === userId)?.role;
   const role =
@@ -56,5 +54,6 @@ export function useWorkspaceAgentAvailability(): WorkspaceAgentAvailability {
       canAssignAgentToIssue(a, { userId: userId ?? null, role }).allowed,
   );
 
-  return hasVisibleAgent ? "available" : "none";
+  if (hasVisibleAgent) return "available";
+  return agentsSucceeded && membersSucceeded ? "none" : "loading";
 }

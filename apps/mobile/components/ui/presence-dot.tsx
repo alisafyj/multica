@@ -9,6 +9,7 @@
  * (`packages/views/agents/presence.ts:46`):
  *   online   → success         (green)
  *   unstable → warning         (amber) — runtime offline < 5 min
+ *   unknown  → muted/40        (gray) — bound runtime health is hidden
  *   offline  → muted/40        (gray)
  *
  * Pure presentation. Caller passes the already-derived `AgentAvailability`
@@ -28,6 +29,7 @@ interface Props {
 const DOT_CLASS: Record<AgentAvailability, string> = {
   online: "bg-success",
   unstable: "bg-warning",
+  unknown: "bg-muted-foreground/40",
   offline: "bg-muted-foreground/40",
   // Retired agent (agent.archived_at set) — gray, mirrors web's archived dot
   // in packages/views/agents/presence.ts.

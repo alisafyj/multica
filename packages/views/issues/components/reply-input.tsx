@@ -11,7 +11,8 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Palette } from "lucide-react";
 import { CommentDesignDeliveryComposer } from "./comment-design-delivery-composer";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
-import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { useCommentDraftStore, useCommentComposerStore } from "@multica/core/issues/stores";
+import { ConciseModeToggle } from "./concise-mode-toggle";
 import { cn } from "@multica/ui/lib/utils";
 import type { AvatarSize } from "@multica/ui/lib/avatar-size";
 import { useT } from "../../i18n";
@@ -34,7 +35,7 @@ interface ReplyInputProps {
   avatarId: string;
   /** Resolves true on success, false on failure — the reply box keeps its text
    *  (locked + spinning) until then, clearing only on success. */
-  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], designRequest?: CommentDesignRequest) => Promise<string | boolean>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], designRequest?: CommentDesignRequest | boolean, conciseMode?: boolean) => Promise<string | boolean>;
   /** Called after the server accepts the reply and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
   size?: "sm" | "default";
@@ -205,12 +206,29 @@ function ReplyInputComposer({
       const suppressAgentIds = triggerPreview.agents
         .filter((agent) => suppressedAgentIds.has(agent.id))
         .map((agent) => agent.id);
-      return onSubmit(
-        content,
-        activeIds.length > 0 ? activeIds : undefined,
-        suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
-        ...(submittedDesignRequest ? [submittedDesignRequest] as const : []),
-      ).then((commentId) => {
+      const conciseMode = useCommentComposerStore.getState().concise || undefined;
+      const result = submittedDesignRequest
+        ? conciseMode === undefined
+          ? onSubmit(
+              content,
+              activeIds.length > 0 ? activeIds : undefined,
+              suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+              submittedDesignRequest,
+            )
+          : onSubmit(
+              content,
+              activeIds.length > 0 ? activeIds : undefined,
+              suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+              submittedDesignRequest,
+              conciseMode,
+            )
+        : onSubmit(
+            content,
+            activeIds.length > 0 ? activeIds : undefined,
+            suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+            conciseMode,
+          );
+      return result.then((commentId) => {
         acceptedCommentIdRef.current = typeof commentId === "string" ? commentId : null;
         return !!commentId;
       });
@@ -340,6 +358,7 @@ function ReplyInputComposer({
             multiple
             onSelect={(file) => lazy.uploadOrQueue([file])}
           />
+          {triggerPreview.agents.length > 0 && <ConciseModeToggle disabled={submitting} />}
           <SubmitButton
             onClick={submit}
             disabled={isEmpty || (!!designRequest && (!issue || !deliveryValid))}

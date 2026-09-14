@@ -133,8 +133,8 @@ export function useUpdateIssue() {
       return api.moveIssue(id, { ...target, ...moveIntent });
     },
     onMutate: ({ id, move_intent: _moveIntent, ...data }) => {
-      // suppress_run / handoff_note are write-time control fields, not Issue
-      // columns. description_base is merge metadata, while description itself
+      // suppress_run is a write-time control field, not an Issue column.
+      // description_base is merge metadata, while description itself
       // is resolved against that base on the server and therefore is not safe
       // to predict optimistically. Keep the authoritative raw description in
       // cache so hidden channel-media markers remain available as the base for
@@ -761,6 +761,7 @@ export function useCreateComment(issueId: string) {
       attachmentIds,
       suppressAgentIds,
       designRequest,
+      conciseMode,
     }: {
       content: string;
       type?: string;
@@ -768,7 +769,8 @@ export function useCreateComment(issueId: string) {
       attachmentIds?: string[];
       suppressAgentIds?: string[];
       designRequest?: CommentDesignRequest;
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds, designRequest),
+      conciseMode?: boolean;
+    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds, { designRequest, conciseMode }),
     onSuccess: (comment) => {
       if (comment.issue_revision) {
         onIssueAuxiliaryRevision(qc, wsId, issueId, comment.issue_revision);

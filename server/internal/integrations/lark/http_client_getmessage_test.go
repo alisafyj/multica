@@ -36,7 +36,7 @@ func TestHTTPClient_GetMessageSingle(t *testing.T) {
 						"create_time": "1000",
 						"sender":      map[string]any{"id": "ou_a", "id_type": "open_id", "sender_type": "user"},
 						"body":        map[string]any{"content": `{"text":"hi"}`},
-						"mentions":    []any{map[string]any{"key": "@_user_1", "id": "ou_b", "name": "Bob"}},
+						"mentions":    []any{map[string]any{"key": "@_user_1", "id": "ou_b", "id_type": "open_id", "name": "Bob"}},
 					},
 				},
 			},
@@ -58,7 +58,7 @@ func TestHTTPClient_GetMessageSingle(t *testing.T) {
 	if m.SenderID != "ou_a" || m.SenderType != "user" {
 		t.Errorf("sender = id:%q type:%q", m.SenderID, m.SenderType)
 	}
-	if len(m.Mentions) != 1 || m.Mentions[0].Key != "@_user_1" || m.Mentions[0].ID != "ou_b" || m.Mentions[0].Name != "Bob" {
+	if len(m.Mentions) != 1 || m.Mentions[0].Key != "@_user_1" || m.Mentions[0].ID != "ou_b" || m.Mentions[0].IDType != "open_id" || m.Mentions[0].Name != "Bob" {
 		t.Errorf("mentions = %+v", m.Mentions)
 	}
 	if a := fake.lastAuth(); a != "Bearer tok" {

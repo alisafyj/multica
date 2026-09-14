@@ -59,20 +59,27 @@ func StderrIsTerminal() bool {
 	return isTerminal(os.Stderr)
 }
 
-// NewWriterLoggerDefault builds a named slog logger that writes structured,
-// color-free output to w, and installs the same handler as the global slog
-// default so bare slog.Info/Warn/... calls (e.g. from LoadConfig) land in the
-// same sink. Intended for standalone processes that log to a file or rotating
-// writer instead of a terminal (the daemon), where ANSI color is never wanted
-// and every log line — injected-logger and package-global alike — must end up
-// in the one managed file. Reads LOG_LEVEL like NewLogger/Init.
+// NewWriterLoggerDefault builds a named slog logger that writes color-free
+// output to w, and installs the same handler as the global slog default so bare
+// slog.Info/Warn/... calls (e.g. from LoadConfig) land in the same sink.
+// MULTICA_DAEMON_LOG_FORMAT=json opts into slog's JSON handler; unset, empty,
+// and unsupported values retain the existing tint format. Intended for
+// standalone processes that log to a file or rotating writer instead of a
+// terminal (the daemon), where every log line — injected-logger and
+// package-global alike — must end up in the one managed file. Reads LOG_LEVEL
+// like NewLogger/Init.
 func NewWriterLoggerDefault(component string, w io.Writer) *slog.Logger {
 	level := parseLevel(os.Getenv("LOG_LEVEL"))
-	handler := tint.NewHandler(w, &tint.Options{
-		Level:      level,
-		TimeFormat: "15:04:05.000",
-		NoColor:    true,
-	})
+	var handler slog.Handler
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("MULTICA_DAEMON_LOG_FORMAT")), "json") {
+		handler = slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	} else {
+		handler = tint.NewHandler(w, &tint.Options{
+			Level:      level,
+			TimeFormat: "15:04:05.000",
+			NoColor:    true,
+		})
+	}
 	base := slog.New(handler)
 	slog.SetDefault(base)
 	return base.With("component", component)

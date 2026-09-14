@@ -11,8 +11,9 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Palette } from "lucide-react";
 import { CommentDesignDeliveryComposer } from "./comment-design-delivery-composer";
 import { formatShortcut, useShortcut } from "@multica/core/shortcuts";
-import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { useCommentDraftStore, useCommentComposerStore } from "@multica/core/issues/stores";
 import { useT } from "../../i18n";
+import { ConciseModeToggle } from "./concise-mode-toggle";
 import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import { useCommentUploads } from "./use-comment-uploads";
@@ -26,7 +27,7 @@ interface CommentInputProps {
   /** Resolves true on success, false on failure. The composer keeps the text
    *  (editor locked + button spinning) until this settles, then clears only on
    *  success — a failed send must not silently discard the user's draft. */
-  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], designRequest?: CommentDesignRequest) => Promise<string | boolean>;
+  onSubmit: (content: string, attachmentIds?: string[], suppressAgentIds?: string[], designRequest?: CommentDesignRequest | boolean, conciseMode?: boolean) => Promise<string | boolean>;
   /** Called after the server accepts the comment and the composer is cleared. */
   onAccepted?: (commentId: string) => void;
 }
@@ -208,12 +209,29 @@ function CommentInput({ issueId, issue, agents = [], onSubmit, onAccepted }: Com
       const suppressAgentIds = triggerPreview.agents
         .filter((agent) => suppressedAgentIds.has(agent.id))
         .map((agent) => agent.id);
-      return onSubmit(
-        content,
-        activeIds.length > 0 ? activeIds : undefined,
-        suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
-        ...(submittedDesignRequest ? [submittedDesignRequest] as const : []),
-      ).then((commentId) => {
+      const conciseMode = useCommentComposerStore.getState().concise || undefined;
+      const result = submittedDesignRequest
+        ? conciseMode === undefined
+          ? onSubmit(
+              content,
+              activeIds.length > 0 ? activeIds : undefined,
+              suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+              submittedDesignRequest,
+            )
+          : onSubmit(
+              content,
+              activeIds.length > 0 ? activeIds : undefined,
+              suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+              submittedDesignRequest,
+              conciseMode,
+            )
+        : onSubmit(
+            content,
+            activeIds.length > 0 ? activeIds : undefined,
+            suppressAgentIds.length > 0 ? suppressAgentIds : undefined,
+            conciseMode,
+          );
+      return result.then((commentId) => {
         acceptedCommentIdRef.current = typeof commentId === "string" ? commentId : null;
         return !!commentId;
       });
@@ -347,6 +365,7 @@ function CommentInput({ issueId, issue, agents = [], onSubmit, onAccepted }: Com
           multiple
           onSelect={(file) => lazy.uploadOrQueue([file])}
         />
+        {triggerPreview.agents.length > 0 && <ConciseModeToggle disabled={submitting} />}
         <SubmitButton
           onClick={submit}
           disabled={isEmpty || (!!designRequest && !deliveryValid)}

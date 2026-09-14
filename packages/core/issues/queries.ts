@@ -184,6 +184,10 @@ export const issueKeys = {
   tasksAll: () => ["issues", "tasks"] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
+  pendingInputsAll: (wsId: string) =>
+    [...issueKeys.all(wsId), "pending-inputs"] as const,
+  pendingInputs: (wsId: string, issueId: string) =>
+    [...issueKeys.pendingInputsAll(wsId), issueId] as const,
   sourceContextPreview: (wsId: string, anchorCommentId: string) =>
     ["source-context", "preview", wsId, anchorCommentId] as const,
 };
@@ -466,9 +470,9 @@ export function issueDetailOptions(wsId: string, id: string) {
  *
  * It deliberately does NOT use `/api/issues/search`: that endpoint runs the
  * workspace-wide full-text query (title/description/comment `LIKE`, ranking,
- * snippet subquery, `COUNT(*) OVER()`) which is orders of magnitude more
- * expensive than a point read, and autolink resolution was the dominant
- * caller of it (MUL-6268).
+ * and snippet subqueries) which is orders of magnitude more expensive than a
+ * point read, and autolink resolution was the dominant caller of it
+ * (MUL-6268).
  *
  * Server state → TanStack Query; the key includes `wsId` and the identifier,
  * so identical identifiers across the app share one request. Caller gates

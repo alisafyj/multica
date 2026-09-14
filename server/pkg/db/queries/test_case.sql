@@ -166,3 +166,63 @@ DELETE FROM test_case_issue WHERE test_case_id = $1 AND workspace_id = $2;
 
 -- name: DeleteTestCaseIssueLinksForIssue :exec
 DELETE FROM test_case_issue WHERE issue_id = $1 AND workspace_id = $2;
+
+-- name: ListDefectsForIssue :many
+-- Defects a test round opened while executing a case that covers this issue:
+-- the "found by tests" list on a requirement. One row per (defect, run case),
+-- newest first; the handler collapses duplicates per defect.
+SELECT i.id AS defect_id, i.number AS defect_number, i.title AS defect_title, i.status AS defect_status,
+       rc.id AS run_case_id, rc.run_id, rc.result, rc.updated_at AS opened_at,
+       COALESCE(rc.case_snapshot->>'key', '')::text AS case_key,
+       r.title AS run_title
+FROM test_case_issue tci
+JOIN test_run_case rc ON rc.test_case_id = tci.test_case_id AND rc.workspace_id = tci.workspace_id
+JOIN issue i ON i.id = rc.defect_issue_id
+JOIN test_run r ON r.id = rc.run_id
+WHERE tci.issue_id = $1 AND tci.workspace_id = $2 AND rc.defect_issue_id IS NOT NULL
+ORDER BY rc.updated_at DESC
+LIMIT 50;
+
+-- name: ListRunCasesThatOpenedIssue :many
+-- The reverse link of `multica test defect open`: which round and case
+-- discovered this issue. Rendered on the defect as "found by run X".
+SELECT rc.id AS run_case_id, rc.run_id, rc.result, rc.executed_at, rc.updated_at,
+       COALESCE(rc.case_snapshot->>'key', '')::text AS case_key,
+       COALESCE(rc.case_snapshot->>'title', '')::text AS case_title,
+       rc.test_case_id,
+       r.title AS run_title, r.status AS run_status, r.environment, r.build_ref
+FROM test_run_case rc
+JOIN test_run r ON r.id = rc.run_id
+WHERE rc.defect_issue_id = $1 AND rc.workspace_id = $2
+ORDER BY rc.updated_at DESC
+LIMIT 20;
+
+-- name: GetLatestTestRunForIssue :one
+-- The newest round that executed any case covering the issue.
+SELECT r.*
+FROM test_run r
+WHERE r.workspace_id = $2
+  AND EXISTS (
+    SELECT 1 FROM test_run_case rc
+    JOIN test_case_issue tci ON tci.test_case_id = rc.test_case_id AND tci.workspace_id = rc.workspace_id
+    WHERE rc.run_id = r.id AND tci.issue_id = $1
+  )
+ORDER BY r.created_at DESC
+LIMIT 1;
+
+-- name: CountIssueRunCaseResults :many
+-- Results of the covering cases inside one round.
+SELECT rc.result, count(*)::bigint AS result_count
+FROM test_run_case rc
+JOIN test_case_issue tci ON tci.test_case_id = rc.test_case_id AND tci.workspace_id = rc.workspace_id
+WHERE rc.run_id = $1 AND tci.issue_id = $2 AND rc.workspace_id = $3
+GROUP BY rc.result;
+
+-- name: ListTestCaseReposForProject :many
+-- Every repo binding of a project's live cases, for change-based regression
+-- selection: which cases claim the files a commit touched.
+SELECT tcr.*, tc.status AS case_status
+FROM test_case_repo tcr
+JOIN test_case tc ON tc.id = tcr.test_case_id
+WHERE tc.project_id = $1 AND tc.workspace_id = $2 AND tc.status <> 'deprecated'
+ORDER BY tcr.test_case_id, tcr.alias ASC, tcr.role ASC;

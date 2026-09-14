@@ -5,6 +5,8 @@ import {
   issueBehavesAsAny,
   issueStatusCategory,
   statusCategoryOfKey,
+  useAnswerPendingInput,
+  usePendingInputs,
 } from "@multica/core/issues";
 import { useStatusLabel } from "../utils/status-label";
 import { priorityLabel } from "../utils/priority-label";
@@ -61,7 +63,7 @@ import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar"
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
 import { PropertyIcon } from "../../common/property-icon";
-import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
+import type { Attachment, Issue, IssueProperty, IssueStatus, IssueStatusCategory, IssuePriority, TimelineEntry, UpdateIssueRequest, PendingInputAnswer } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
@@ -629,7 +631,16 @@ function ActivityBlock({
         } else if (isDueDateChange) {
           leadIcon = <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />;
         } else {
-          leadIcon = <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="sm" />;
+          leadIcon = (
+            <ActorAvatar
+              actorType={entry.actor_type}
+              actorId={entry.actor_id}
+              name={entry.actor_name}
+              avatarUrl={entry.actor_avatar_url}
+              profileRequiresDirectoryEntry
+              size="sm"
+            />
+          );
         }
 
         return (
@@ -638,7 +649,9 @@ function ActivityBlock({
               {leadIcon}
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-1">
-              <span className="shrink-0 font-medium">{getActorName(entry.actor_type, entry.actor_id)}</span>
+              <span className="shrink-0 font-medium">
+                {entry.actor_name || getActorName(entry.actor_type, entry.actor_id)}
+              </span>
               <span className="truncate">{formatActivity(entry, t, locale, getActorName, resolveStatusLabel)}</span>
               {(entry.coalesced_count ?? 1) > 1 &&
                 entry.action !== "task_completed" &&
@@ -1421,6 +1434,18 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     submitComment, submitReply,
     editComment, deleteComment, toggleResolveComment, toggleReaction: handleToggleReaction,
   } = useIssueTimeline(id, user?.id);
+  const pendingInputsQuery = usePendingInputs(wsId, id, !!issue);
+  const { mutateAsync: answerPendingInput } = useAnswerPendingInput(wsId, id);
+  const pendingInputByCommentId = useMemo(() => new Map(
+    (pendingInputsQuery.data ?? []).map((pendingInput) => [
+      pendingInput.question_comment_id,
+      pendingInput,
+    ]),
+  ), [pendingInputsQuery.data]);
+  const handleAnswerPendingInput = useCallback((
+    pendingInputId: string,
+    answers: Record<string, PendingInputAnswer>,
+  ) => answerPendingInput({ pendingInputId, answers }).then(() => undefined), [answerPendingInput]);
 
   // Resolve / unresolve must always clear the per-session expand entry so
   // re-resolving an already-expanded thread folds it back to the bar (the
@@ -1998,8 +2023,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   const descEditorRef = useRef<ContentEditorRef>(null);
   const descriptionEditingRef = useRef(false);
-  const [descriptionConflictDraft, setDescriptionConflictDraft] = useState<string | null>(null);
-  const descriptionAttachmentIdsRef = useRef<string[]>([]);
   const descriptionSaveInFlightRef = useRef(false);
   const descriptionSaveIssueIdRef = useRef(id);
   const pendingDescriptionSaveRef = useRef<{
@@ -2021,9 +2044,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const [titleResetToken, setTitleResetToken] = useState(0);
   useEffect(() => {
     setTitleConflictDraft(null);
-    setDescriptionConflictDraft(null);
     titleBaseRef.current = undefined;
-    descriptionAttachmentIdsRef.current = [];
     descriptionSaveInFlightRef.current = false;
     descriptionSaveIssueIdRef.current = id;
     pendingDescriptionSaveRef.current = null;
@@ -2276,7 +2297,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       {
         onSuccess: (serverIssue) => {
           if (descriptionSaveIssueIdRef.current !== id) return;
-          setDescriptionConflictDraft(null);
           descriptionSaveInFlightRef.current = false;
           const pending = pendingDescriptionSaveRef.current;
           pendingDescriptionSaveRef.current = null;
@@ -2291,16 +2311,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             persistDescriptionSave({ ...pending, baseMarkdown: nextBase });
           }
         },
-        onError: (error) => {
+        onError: () => {
           if (descriptionSaveIssueIdRef.current !== id) return;
           descriptionSaveInFlightRef.current = false;
-          const pending = pendingDescriptionSaveRef.current;
           pendingDescriptionSaveRef.current = null;
-          if (errorCode(error) === "revision_conflict") {
-            const latest = pending ?? draft;
-            descriptionAttachmentIdsRef.current = latest.attachmentIds;
-            setDescriptionConflictDraft(latest.markdown);
-          }
         },
       },
     );
@@ -2309,7 +2323,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const queueDescriptionSave = (
     draft: { markdown: string; baseMarkdown: string; attachmentIds: string[] },
   ) => {
-    descriptionAttachmentIdsRef.current = draft.attachmentIds;
     if (descriptionSaveInFlightRef.current) {
       pendingDescriptionSaveRef.current = draft;
       return;
@@ -2582,13 +2595,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           its latest recorded outcome. Self-contained and hides itself when the
           issue has no linked cases, so workspaces that do not use the testing
           surface see nothing. */}
-      <IssueTestCoverage issueId={id} />
+      <IssueTestCoverage issueId={id} projectId={issue.project_id} issueTitle={issue.title} />
 
       {/* Execution log — active runs + collapsed past runs, each carrying its
           own token spend, with the issue total on the section header.
           Self-contained; owns its own collapse state and WS subscriptions.
           Hides itself when there are no runs to show. */}
-      <ExecutionLogSection issueId={id} identifier={issue.identifier} />
+      <ExecutionLogSection workspaceId={wsId} issueId={id} identifier={issue.identifier} />
 
       {/* Details — creator and timestamps. Sits below the execution log
           because it is the least-read block in the sidebar: the values
@@ -2691,6 +2704,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             expandedResolvedIds={expandedResolved}
             onResolvedExpandChange={toggleResolvedExpand}
             highlightedCommentId={highlightedId}
+            pendingInput={pendingInputByCommentId.get(item.entry.id)}
+            onAnswerPendingInput={handleAnswerPendingInput}
           />
         </div>
       );
@@ -3070,7 +3085,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             <ContentEditor
               ref={descEditorRef}
               key={id}
-              value={descriptionConflictDraft ?? issue.description ?? ""}
+              value={issue.description ?? ""}
               placeholder={t(($) => $.detail.desc_placeholder)}
               onUpdate={(md, baseMarkdown) => {
                 // Bind any pending uploads still referenced in the markdown
@@ -3108,64 +3123,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               currentIssueId={id}
               attachments={descEditorAttachments}
             />
-
-            {descriptionConflictDraft !== null ? (
-              <RevisionConflictCompare
-                className="mt-3"
-                title={t(($) => $.revision.compare_description)}
-                serverLabel={t(($) => $.revision.server_version)}
-                localLabel={t(($) => $.revision.local_version)}
-                serverValue={issue.description || ""}
-                localValue={descriptionConflictDraft}
-                serverAction={(
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      // The editor is dirty — that is why this conflict
-                      // exists — so the `value` prop cannot land: ContentEditor
-                      // deliberately refuses to clobber unsaved bytes.
-                      // adoptContent is the explicit "take this content"
-                      // channel and applies without emitting an update, so
-                      // discarding never writes.
-                      descEditorRef.current?.adoptContent(issue.description || "");
-                      descriptionAttachmentIdsRef.current = [];
-                      pendingDescriptionSaveRef.current = null;
-                      setDescriptionConflictDraft(null);
-                    }}
-                  >
-                    {t(($) => $.revision.use_server)}
-                  </Button>
-                )}
-                localAction={(
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      handleUpdateField(
-                        {
-                          description: descriptionConflictDraft,
-                          description_base: issue.description || "",
-                          attachment_ids:
-                            descriptionAttachmentIdsRef.current.length > 0
-                              ? descriptionAttachmentIdsRef.current
-                              : undefined,
-                        },
-                        {
-                          onSuccess: () => {
-                            setDescriptionConflictDraft(null);
-                          },
-                        },
-                      );
-                    }}
-                  >
-                    {t(($) => $.revision.keep_local)}
-                  </Button>
-                )}
-              />
-            ) : null}
 
             <div className="flex items-center gap-1 mt-3">
               <ReactionBar

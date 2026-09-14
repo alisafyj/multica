@@ -24,6 +24,7 @@ const apiUploadFile = vi.hoisted(() => vi.fn());
 const apiListWorkspaces = vi.hoisted(() => vi.fn());
 const apiListQuickActions = vi.hoisted(() => vi.fn());
 const apiRenderQuickAction = vi.hoisted(() => vi.fn());
+const apiPreviewCommentTriggers = vi.hoisted(() => vi.fn());
 const uploadWithToast = vi.hoisted(() => vi.fn());
 const editorDefaultValues = vi.hoisted(() => ({
   values: [] as Array<string | undefined>,
@@ -61,6 +62,7 @@ vi.mock("@multica/core/api", () => ({
     renderQuickAction: apiRenderQuickAction,
     listProjectResources: vi.fn().mockResolvedValue({ resources: [{ id: "repository-1", resource_type: "github_repo", config: { url: "https://github.com/example/project" } }] }),
     listProjectDesignSystemCatalogue: vi.fn().mockResolvedValue({ design_systems: [] }),
+    previewCommentTriggers: apiPreviewCommentTriggers,
   },
 }));
 
@@ -77,6 +79,8 @@ vi.mock("../../common/actor-avatar", () => ({
       {actorType}:{actorId}
     </span>
   ),
+  // CommentTriggerChips renders one per agent chip.
+  AgentStatusDot: () => <span data-testid="status-dot" />,
 }));
 
 vi.mock("../../editor", async () => ({
@@ -265,11 +269,15 @@ beforeEach(() => {
   apiListWorkspaces.mockReset();
   apiListQuickActions.mockReset();
   apiRenderQuickAction.mockReset();
+  // Default: no resolved triggers, matching an issue with no assignee — the
+  // concise toggle's render gate must see the same shape as production.
+  apiPreviewCommentTriggers.mockReset();
+  apiPreviewCommentTriggers.mockResolvedValue({ agents: [], blocked: [] });
   insertMarkdownSpy.mockReset();
   insertPlaceholderSpy.mockReset();
   insertMarkdownBehavior.succeed = true;
   localStorage.clear();
-  useCommentComposerStore.setState({ sticky: true });
+  useCommentComposerStore.setState({ sticky: true, concise: false });
   // The composer's pinning (and the height cap that follows it) is viewport
   // dependent, so a narrow-viewport test must not leak into the next one.
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
@@ -346,7 +354,7 @@ describe("explicit comment design delivery", () => {
     activateComposer("reply-composer-shell");
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "Ordinary sibling reply" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Ordinary sibling reply", undefined, undefined));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Ordinary sibling reply", undefined, undefined, undefined));
     await waitFor(() => expect(useCommentDraftStore.getState().drafts["reply:issue-1:comment-2"]).toBeUndefined());
 
     view.rerender(renderThread("comment-1"));
@@ -354,7 +362,7 @@ describe("explicit comment design delivery", () => {
     expect(useCommentDraftStore.getState().drafts["reply:issue-1:comment-1"]?.designRequest).toEqual(request);
     fireEvent.click(screen.getByRole("button", { name: "Remove design delivery" }));
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenLastCalledWith("Thread one design", undefined, undefined));
+    await waitFor(() => expect(onSubmit).toHaveBeenLastCalledWith("Thread one design", undefined, undefined, undefined));
     expect(store.getDraft("new:issue-1")).toBe("Main composer draft");
   });
 });
@@ -478,7 +486,6 @@ describe("comment composers", () => {
     const shell = screen.getByTestId("drop-zone");
     expect(shell.className).not.toMatch(/max-h-/);
   });
-
   it("keeps main comment submission wired after removing expand", async () => {
     const { container, onSubmit } = renderCommentInput();
 
@@ -489,7 +496,7 @@ describe("comment composers", () => {
     fireEvent.click(getSubmitButton(container));
 
     await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith("hello from composer", undefined, undefined);
+      expect(onSubmit).toHaveBeenCalledWith("hello from composer", undefined, undefined, undefined);
     });
   });
 
@@ -503,7 +510,7 @@ describe("comment composers", () => {
     fireEvent.click(getSubmitButton(container));
 
     await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith("thread reply", undefined, undefined);
+      expect(onSubmit).toHaveBeenCalledWith("thread reply", undefined, undefined, undefined);
     });
   });
 
@@ -538,6 +545,7 @@ describe("comment composers", () => {
       expect.stringContaining(marker),
       undefined,
       undefined,
+      undefined,
     ));
   });
 
@@ -560,7 +568,7 @@ describe("comment composers", () => {
         "true",
       ),
     );
-    expect(onSubmit).toHaveBeenCalledWith("sending", undefined, undefined);
+    expect(onSubmit).toHaveBeenCalledWith("sending", undefined, undefined, undefined);
 
     resolveSubmit(true);
 
@@ -1049,6 +1057,7 @@ describe("comment composers — upload submit gate", () => {
         expect.stringContaining("https://cdn.example/att-9.png"),
         ["att-9"],
         undefined,
+        undefined,
       ),
     );
   });
@@ -1070,7 +1079,7 @@ describe("comment composers — upload submit gate", () => {
     fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    expect(onSubmit).toHaveBeenCalledWith("keep this, dropped the image", undefined, undefined);
+    expect(onSubmit).toHaveBeenCalledWith("keep this, dropped the image", undefined, undefined, undefined);
   });
 
   it("writes the finished upload's link into the persisted draft after the composer unmounts", async () => {
@@ -1212,5 +1221,98 @@ describe("sticky composer preference", () => {
 
     activateComposer("comment-composer-shell");
     expect(screen.getByTestId("editor").parentElement?.className).not.toContain("max-h-[40vh]");
+  });
+});
+
+describe("comment composers — concise mode", () => {
+  const triggerAgent = { id: "agent-1", name: "Agent One" };
+
+  function typeAndRenderWithAgentTrigger(onSubmit = vi.fn().mockResolvedValue(true)) {
+    apiPreviewCommentTriggers.mockResolvedValue({
+      agents: [triggerAgent],
+      blocked: [],
+    });
+    const view = renderCommentInput(onSubmit);
+    activateComposer("comment-composer-shell");
+    // The preview only fires once the draft is non-empty (debounced) — type
+    // first, then wait for the toggle.
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "please run" } });
+    return view;
+  }
+
+  it("renders the Zap toggle only when a trigger resolved", async () => {
+    // Empty-agents mock from beforeEach: a composer whose comment triggers
+    // nobody must not show a dead switch (mirrors chat's !noAgent gate).
+    renderCommentInput();
+    activateComposer("comment-composer-shell");
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "no one triggers" } });
+    // Advance past the preview debounce so the empty result lands.
+    await act(async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 700);
+      await promise;
+    });
+    expect(screen.queryByRole("checkbox", { name: /concise/i })).toBeNull();
+  });
+
+  it("renders the Zap toggle once a trigger resolves", async () => {
+    typeAndRenderWithAgentTrigger();
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /concise/i })).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+  });
+
+  it("sends concise_mode true when the member's preference is on", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    typeAndRenderWithAgentTrigger(onSubmit);
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /concise/i })).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /concise/i }));
+    expect(useCommentComposerStore.getState().concise).toBe(true);
+
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "run it light" } });
+    fireEvent.click(getSubmitButton(document.body));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith("run it light", undefined, undefined, true),
+    );
+  });
+
+  it("keeps the standard body when the preference is off", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    typeAndRenderWithAgentTrigger(onSubmit);
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /concise/i })).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "standard run" } });
+    fireEvent.click(getSubmitButton(document.body));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith("standard run", undefined, undefined, undefined),
+    );
+  });
+
+  it("applies the same preference to thread replies", async () => {
+    apiPreviewCommentTriggers.mockResolvedValue({
+      agents: [triggerAgent],
+      blocked: [],
+    });
+    const onSubmit = vi.fn().mockResolvedValue("reply-new");
+    renderReplyInput({ onSubmit });
+    activateComposer("reply-composer-shell");
+
+    useCommentComposerStore.getState().setConcise(true);
+    fireEvent.change(screen.getByTestId("editor"), { target: { value: "light reply" } });
+    fireEvent.keyDown(screen.getByTestId("editor"), { key: "Enter", metaKey: true });
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith("light reply", undefined, undefined, true),
+    );
   });
 });
