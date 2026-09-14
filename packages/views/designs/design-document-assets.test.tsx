@@ -41,13 +41,13 @@ it("only exposes normalized indexed package images with matching MIME and role",
 
 describe("saved asset downloads", () => {
   it("downloads the original bytes from the displayed revision only", async () => {
-    const blob = new Blob([new Uint8Array([137, 80, 78, 71, 0, 255])], { type: "image/png" });
-    vi.mocked(fetch).mockResolvedValue(new Response(blob, { headers: { "content-type": "image/png" } }));
+    const bytes = new Uint8Array([137, 80, 78, 71, 0, 255]);
+    vi.mocked(fetch).mockResolvedValue(new Response(bytes, { headers: { "content-type": "image/png" } }));
     render(<DesignDocumentAssets revision={revision()} />);
     fireEvent.click(screen.getByRole("button", { name: "下载 assets/logo.png" }));
     await waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
     const downloaded = vi.mocked(downloadBlob).mock.calls[0]![0];
-    expect(await downloaded.arrayBuffer()).toEqual(await blob.arrayBuffer());
+    expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(bytes);
     expect(vi.mocked(downloadBlob).mock.calls[0]![1]).toBe("logo.png");
     expect(vi.mocked(fetch).mock.calls[0]![0]).toBe(`${revision().resource_base_path}/assets/logo.png`);
   });

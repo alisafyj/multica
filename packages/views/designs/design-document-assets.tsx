@@ -18,12 +18,22 @@ function mediaType(value: string): string {
   return value.split(";")[0]!.trim().toLowerCase();
 }
 
+/** Control characters corrupt filesystem paths and URL construction. */
+function hasPathControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 /** Match the saved package's image contract, never infer assets from page markup. */
 export function designDocumentAssets(files: DesignDocumentFileEntry[]): DesignDocumentFileEntry[] {
   const seen = new Set<string>();
   return files.filter((file) => {
     const path = file.path;
-    if (!path.startsWith("assets/") || path !== path.trim() || /[\\%?#:\x00-\x1f\x7f]/.test(path)) return false;
+    if (!path.startsWith("assets/") || path !== path.trim()) return false;
+    if (hasPathControlCharacter(path) || /[\\%?#:]/.test(path)) return false;
     if (path.split("/").some((part) => !part || part === "." || part === "..")) return false;
     const extension = path.split(".").pop()!.toLowerCase();
     if (file.role !== "asset" || !assetTypes[extension] || mediaType(file.media_type) !== assetTypes[extension]) return false;
@@ -48,7 +58,8 @@ function AssetItem({ revision, file }: { revision: DesignDocumentRevision; file:
   }, []);
   const url = useMemo(() => {
     const base = revision.resource_base_path;
-    if (!/^\/api\/design-document-previews\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/files$/.test(base) || /[\\%?#\s\x00-\x1f\x7f]/.test(base)) return "";
+    if (!/^\/api\/design-document-previews\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/files$/.test(base)) return "";
+    if (hasPathControlCharacter(base) || /[\\%?#\s]/.test(base)) return "";
     if (base.split("/").some((part) => part === "." || part === "..")) return "";
     return api.getDesignDocumentPreviewFileURL(revision.resource_base_path, file.path);
   }, [revision.resource_base_path, file.path]);
